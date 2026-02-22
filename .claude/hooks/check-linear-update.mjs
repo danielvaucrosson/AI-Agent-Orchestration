@@ -63,9 +63,10 @@ try {
     reason: [
       `You are working on Linear issue ${issueId}.`,
       `Before finishing, please update Linear:`,
-      `1. Update status if appropriate:`,
+      `1. Update the issue status if appropriate using the Linear MCP update_issue tool (set state to "In Progress", "In Review", or "Done")`,
+      `2. Post a summary comment using the Linear MCP create_comment tool describing what was accomplished`,
+      `If MCP tools are unavailable, use the CLI fallback:`,
       `   LINEAR_API_KEY="$LINEAR_API_KEY" node scripts/linear.mjs status ${issueId} "In Progress"`,
-      `2. Post a summary comment:`,
       `   LINEAR_API_KEY="$LINEAR_API_KEY" node scripts/linear.mjs comment ${issueId} "<summary of work done>"`,
     ].join("\n"),
   };
