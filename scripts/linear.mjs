@@ -51,12 +51,11 @@ async function addComment(issueId, body) {
 
 async function linkPR(issueId, prUrl) {
   const issue = await findIssue(issueId);
-  await issue.update({});
   await client.createComment({
     issueId: issue.id,
     body: `PR opened: ${prUrl}`,
   });
-  await client.attachmentCreate({
+  await client.createAttachment({
     issueId: issue.id,
     title: "Pull Request",
     url: prUrl,
