@@ -1,0 +1,20 @@
+{
+  "name": "test",
+  "version": "1.0.0",
+  "description": "A sandbox repository for validating AI agent workflows. Tasks are managed in Linear and executed by AI agents via Claude Code, with results delivered as pull requests for human review.",
+  "type": "module",
+  "scripts": {
+    "linear": "node scripts/linear.mjs",
+    "linear:test": "node scripts/linear.mjs test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://local_proxy@127.0.0.1:25556/git/danielvaucrosson/Test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@linear/sdk": "^75.0.0"
+  }
+}
