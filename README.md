@@ -19,9 +19,27 @@ cp .env.example .env
 # Edit .env and add your Linear API key
 ```
 
-## Linear Integration
+## Automatic Linear Sync (GitHub Action)
 
-The agent uses `scripts/linear.mjs` to keep Linear in sync as it works.
+A GitHub Action (`.github/workflows/linear-sync.yml`) keeps Linear updated automatically based on git activity. No extra work is needed from the agent — just include the Linear issue ID somewhere in the branch name, PR title, or PR body (e.g. `feature/TES-42-add-widget`).
+
+| Event | Linear Update |
+|---|---|
+| **Push to branch** | Issue → **In Progress**, comment with commit link |
+| **PR opened** | Issue → **In Review**, PR attached |
+| **PR merged** | Issue → **Done** |
+
+### Setup
+
+1. Go to **Settings → Secrets and variables → Actions** in your GitHub repo.
+2. Add a repository secret called `LINEAR_API_KEY` with your Linear API key.
+3. That's it — the workflow runs on every push and PR event.
+
+To disable the sync without removing the workflow, set a repository variable `LINEAR_ENABLED` to `false`.
+
+## Linear CLI (manual)
+
+The agent can also use `scripts/linear.mjs` to update Linear manually.
 
 ```bash
 # Test your connection

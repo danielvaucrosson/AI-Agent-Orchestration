@@ -1,0 +1,76 @@
+name: Sync Linear Issues
+
+on:
+  push:
+    branches-ignore:
+      - master
+      - main
+  pull_request:
+    types: [opened, closed]
+
+jobs:
+  sync-linear:
+    runs-on: ubuntu-latest
+    # Skip if no Linear API key is configured
+    if: ${{ vars.LINEAR_ENABLED != 'false' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Extract Linear issue ID
+        id: extract
+        run: node scripts/extract-issue-id.mjs
+        env:
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
+
+      - name: Update Linear on push (In Progress)
+        if: >
+          github.event_name == 'push'
+          && steps.extract.outputs.issue_id != ''
+        run: |
+          node scripts/linear.mjs status "$ISSUE_ID" "In Progress"
+          node scripts/linear.mjs comment "$ISSUE_ID" "Branch \`$BRANCH\` pushed — [view commits](https://github.com/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.event.after }})"
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          ISSUE_ID: ${{ steps.extract.outputs.issue_id }}
+          BRANCH: ${{ github.ref_name }}
+
+      - name: Update Linear on PR opened (In Review)
+        if: >
+          github.event_name == 'pull_request'
+          && github.event.action == 'opened'
+          && steps.extract.outputs.issue_id != ''
+        run: |
+          node scripts/linear.mjs status "$ISSUE_ID" "In Review"
+          node scripts/linear.mjs link-pr "$ISSUE_ID" "$PR_URL"
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          ISSUE_ID: ${{ steps.extract.outputs.issue_id }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+
+      - name: Update Linear on PR merged (Done)
+        if: >
+          github.event_name == 'pull_request'
+          && github.event.action == 'closed'
+          && github.event.pull_request.merged == true
+          && steps.extract.outputs.issue_id != ''
+        run: |
+          node scripts/linear.mjs status "$ISSUE_ID" "Done"
+          node scripts/linear.mjs comment "$ISSUE_ID" "PR merged — marking done."
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          ISSUE_ID: ${{ steps.extract.outputs.issue_id }}
+
+      - name: No issue ID found
+        if: steps.extract.outputs.issue_id == ''
+        run: echo "No Linear issue ID found in branch name or PR text — skipping sync."
