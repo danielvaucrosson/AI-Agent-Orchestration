@@ -10,8 +10,7 @@
 export function average(nums) {
   if (nums.length === 0) return 0;
   const sum = nums.reduce((acc, n) => acc + n, 0);
-  // BUG: divides by nums.length + 1 instead of nums.length
-  return sum / (nums.length + 1);
+  return sum / nums.length;
 }
 
 /**

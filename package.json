@@ -4,7 +4,7 @@
   "description": "A sandbox repository for validating AI agent workflows. Tasks are managed in Linear and executed by AI agents via Claude Code, with results delivered as pull requests for human review.",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test tests/*.test.mjs",
     "linear": "node scripts/linear.mjs",
     "linear:test": "node scripts/linear.mjs test"
   },
