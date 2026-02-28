@@ -31,17 +31,23 @@ When you receive a task referencing a Linear issue (e.g., DVA-5), or are asked t
 
 4. **Do the work.** Post comments on Linear for significant milestones only — not every file edit. Good reasons to comment: encountering a blocker, making an architectural decision, completing a major step.
 
-5. **Commit, push, and create a PR.** Include the issue ID in the PR title (e.g., `DVA-5: Add README`). The GitHub Action will automatically move the issue to "In Review" and link the PR.
+5. **Run the pre-PR review** before creating a pull request:
+   ```bash
+   node scripts/pre-pr-review.mjs
+   ```
+   This runs 5 quality gates (tests, security, conventions, code quality, diff size). If any gate fails, fix the issues before proceeding. The PreToolUse hook will block `gh pr create` if no recent review has passed.
 
-6. **Post a completion comment** summarizing what was done using Linear MCP `create_comment` or the CLI fallback.
+6. **Commit, push, and create a PR.** Include the issue ID in the PR title (e.g., `DVA-5: Add README`). The GitHub Action will automatically move the issue to "In Review" and link the PR.
 
-7. **If the task is incomplete**, generate a handoff document before ending your session:
+7. **Post a completion comment** summarizing what was done using Linear MCP `create_comment` or the CLI fallback.
+
+8. **If the task is incomplete**, generate a handoff document before ending your session:
    - Write a handoff file to `.claude/handoffs/<ISSUE-ID>.md` following the template in `.claude/handoff-template.md`
    - Include: current state, files changed, decisions made, blockers, and next steps
    - Post the handoff summary as a Linear comment so the next agent can find it
    - The stop hook will remind you if you forget
 
-8. **When resuming an issue**, check for an existing handoff first:
+9. **When resuming an issue**, check for an existing handoff first:
    - Read `.claude/handoffs/<ISSUE-ID>.md` if it exists
    - Acknowledge the prior session's state before continuing
    - After completing the task, clean up the handoff: `node scripts/handoff.mjs clean <ISSUE-ID>`
@@ -73,6 +79,30 @@ node scripts/handoff.mjs list               # List all active handoffs
 node scripts/handoff.mjs clean DVA-9        # Remove handoff after completion
 node scripts/handoff.mjs template           # Print the handoff template
 ```
+
+**Pre-PR review** (`scripts/pre-pr-review.mjs`) — runs quality gates before creating a PR:
+```bash
+node scripts/pre-pr-review.mjs                    # Run all 5 gates
+node scripts/pre-pr-review.mjs --gate security     # Run a single gate
+node scripts/pre-pr-review.mjs --json              # Output JSON results
+node scripts/pre-pr-review.mjs --report report.md  # Write Markdown report
+node scripts/pre-pr-review.mjs --force             # Always exit 0
+node scripts/pre-pr-review.mjs --help              # Show usage
+```
+
+**Quality gates:**
+| Gate          | Checks                                           |
+|---------------|--------------------------------------------------|
+| `tests`       | Runs `npm test` and verifies all tests pass      |
+| `security`    | Scans for hardcoded secrets, tokens, unsafe APIs |
+| `conventions` | Branch naming, test coverage, script docs        |
+| `codeQuality` | TODO markers, console.log, empty catch blocks    |
+| `diffSize`    | Warns on large diffs (>1000 lines)               |
+
+**PreToolUse hook** (`.claude/hooks/pre-pr-check.mjs`):
+- Automatically intercepts `gh pr create` commands
+- Blocks PR creation if no review has passed in the last 30 minutes
+- Bypass with `--force` or `--skip-review` flag on the `gh pr create` command
 
 ### What the GitHub Action Handles (do NOT duplicate)
 
