@@ -1,0 +1,169 @@
+name: PR Feedback Loop
+
+# Triggered when:
+# 1. A reviewer submits a review on a PR with the "agent-actionable" label
+# 2. Someone comments "/agent fix" on a PR
+on:
+  pull_request_review:
+    types: [submitted]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  check-trigger:
+    runs-on: ubuntu-latest
+    if: ${{ vars.LINEAR_ENABLED != 'false' }}
+    outputs:
+      should_run: ${{ steps.guard.outputs.should_run }}
+      pr_number: ${{ steps.guard.outputs.pr_number }}
+      trigger_type: ${{ steps.guard.outputs.trigger_type }}
+    steps:
+      - name: Check trigger conditions
+        id: guard
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { context } = require('@actions/github');
+            let shouldRun = false;
+            let prNumber = '';
+            let triggerType = '';
+
+            if (context.eventName === 'pull_request_review') {
+              // Check if PR has the "agent-actionable" label
+              const pr = context.payload.pull_request;
+              prNumber = pr.number.toString();
+              const hasLabel = pr.labels.some(l => l.name === 'agent-actionable');
+
+              if (hasLabel && context.payload.review.state === 'changes_requested') {
+                shouldRun = true;
+                triggerType = 'review';
+                core.info(`Review with changes requested on PR #${prNumber} (has agent-actionable label)`);
+              } else if (hasLabel && context.payload.review.body && context.payload.review.body.trim().length > 0) {
+                shouldRun = true;
+                triggerType = 'review';
+                core.info(`Review with comments on PR #${prNumber} (has agent-actionable label)`);
+              } else {
+                core.info(`Skipping: PR #${prNumber} either lacks agent-actionable label or review has no actionable content`);
+              }
+            }
+
+            if (context.eventName === 'issue_comment') {
+              // Only act on PR comments (not regular issue comments)
+              const issue = context.payload.issue;
+              if (!issue.pull_request) {
+                core.info('Skipping: comment is on an issue, not a PR');
+              } else {
+                const body = (context.payload.comment.body || '').trim();
+                if (body.startsWith('/agent fix') || body.startsWith('/agent-fix')) {
+                  shouldRun = true;
+                  prNumber = issue.number.toString();
+                  triggerType = 'command';
+                  core.info(`"/agent fix" command detected on PR #${prNumber}`);
+                } else {
+                  core.info('Skipping: comment does not contain /agent fix command');
+                }
+              }
+            }
+
+            core.setOutput('should_run', shouldRun.toString());
+            core.setOutput('pr_number', prNumber);
+            core.setOutput('trigger_type', triggerType);
+
+  address-feedback:
+    needs: check-trigger
+    if: needs.check-trigger.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          # Checkout the PR's head branch so we can push fixes
+          ref: ${{ github.event.pull_request.head.ref || '' }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve PR branch (for issue_comment events)
+        if: github.event_name == 'issue_comment'
+        id: pr-branch
+        run: |
+          PR_DATA=$(gh pr view ${{ needs.check-trigger.outputs.pr_number }} --json headRefName,headRepository)
+          BRANCH=$(echo "$PR_DATA" | jq -r '.headRefName')
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          git checkout "$BRANCH"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Collect review comments
+        id: collect
+        run: |
+          node scripts/pr-feedback.mjs collect \
+            --pr "${{ needs.check-trigger.outputs.pr_number }}" \
+            --trigger "${{ needs.check-trigger.outputs.trigger_type }}" \
+            --output /tmp/feedback.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Generate agent prompt
+        id: prompt
+        run: |
+          node scripts/pr-feedback.mjs prompt \
+            --input /tmp/feedback.json \
+            --output /tmp/agent-prompt.md
+
+      - name: Post acknowledgment
+        run: |
+          PR_NUM="${{ needs.check-trigger.outputs.pr_number }}"
+          COMMENT_COUNT=$(jq '.comments | length' /tmp/feedback.json)
+          gh pr comment "$PR_NUM" \
+            --body "🤖 **Agent picking up feedback** — found $COMMENT_COUNT review comment(s) to address. Working on fixes..."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Display prompt for agent
+        run: |
+          echo "========================================="
+          echo "AGENT PROMPT (to be processed by Claude):"
+          echo "========================================="
+          cat /tmp/agent-prompt.md
+          echo ""
+          echo "========================================="
+          echo "In a full setup, this prompt would be fed"
+          echo "to Claude Code to make the actual fixes."
+          echo "========================================="
+
+      # NOTE: The step below is a placeholder for the actual Claude Code
+      # integration. In production, this would invoke Claude Code with
+      # the generated prompt. For now, it just outputs the prompt.
+      #
+      # - name: Run Claude Code agent
+      #   run: |
+      #     claude --print /tmp/agent-prompt.md
+      #   env:
+      #     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Update Linear issue
+        if: always()
+        run: |
+          ISSUE_ID=$(node scripts/extract-issue-id.mjs 2>/dev/null | grep -oP '[A-Z]+-\d+' || echo "")
+          if [ -n "$ISSUE_ID" ]; then
+            node scripts/linear.mjs comment "$ISSUE_ID" \
+              "PR feedback loop triggered on PR #${{ needs.check-trigger.outputs.pr_number }} (${{ needs.check-trigger.outputs.trigger_type }}). Review comments collected for agent processing."
+          fi
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+        continue-on-error: true
