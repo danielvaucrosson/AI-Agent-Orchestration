@@ -35,6 +35,9 @@ When you receive a task referencing a Linear issue (e.g., DVA-5), or are asked t
 
 6. **Post a completion comment** summarizing what was done using Linear MCP `create_comment` or the CLI fallback.
 
+   **After creating the PR**, attach the audit trail: `node scripts/audit.mjs attach <pr-number>`
+   This posts a collapsible summary of all agent actions as a PR comment for reviewer visibility.
+
 7. **If the task is incomplete**, generate a handoff document before ending your session:
    - Write a handoff file to `.claude/handoffs/<ISSUE-ID>.md` following the template in `.claude/handoff-template.md`
    - Include: current state, files changed, decisions made, blockers, and next steps
@@ -65,6 +68,16 @@ node scripts/linear.mjs states                         # List states
 ```
 CLI requires `LINEAR_API_KEY` environment variable.
 
+**Audit trail** (`scripts/audit.mjs`) — auto-populated by hooks, no env vars needed:
+```bash
+node scripts/audit.mjs init                           # Start a new audit session
+node scripts/audit.mjs log decision "Chose X over Y"  # Add manual log entry
+node scripts/audit.mjs summary                        # Print session stats
+node scripts/audit.mjs export                         # Export full trail as Markdown
+node scripts/audit.mjs attach 5                       # Post trail as PR #5 comment
+node scripts/audit.mjs clear                          # Remove session log
+```
+
 **Handoff utility** (`scripts/handoff.mjs`) — no env vars needed:
 ```bash
 node scripts/handoff.mjs check DVA-9        # Check if a handoff exists
@@ -90,6 +103,16 @@ After pushing or opening a PR, the GitHub Action handles status transitions. Do 
 - **During work (pre-push):** Comment on significant decisions or blockers
 - **After finishing work (pre-push):** Comment a summary of what was accomplished
 - **On incomplete session exit:** Write a handoff document and post the summary to Linear
+
+## Audit Trail
+
+Agent sessions are automatically logged by `PreToolUse` and `PostToolUse` hooks. The raw log is stored at `.claude/audit/current.jsonl` (gitignored). Key points:
+
+- **Automatic:** Tool invocations are captured automatically — no manual action needed
+- **Manual entries:** Use `node scripts/audit.mjs log <category> <message>` to log decisions, blockers, or architectural notes that hooks can't capture
+- **Export:** Run `node scripts/audit.mjs export` to generate a Markdown summary
+- **PR attachment:** Run `node scripts/audit.mjs attach <pr-number>` after creating a PR to post the audit trail as a collapsible comment
+- **Session lifecycle:** Logs are cleared when you run `init` or `clear`. The stop hook will remind you to export before finishing.
 
 ## Environment
 

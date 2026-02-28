@@ -20,6 +20,7 @@ import { getBranch, extractIssueId } from "./linear-helpers.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const HANDOFFS_DIR = join(__dirname, "..", "handoffs");
+const AUDIT_LOG = join(__dirname, "..", "audit", "current.jsonl");
 
 // Patterns that indicate the agent already updated Linear this turn
 const UPDATED_PATTERNS = [
@@ -49,6 +50,14 @@ const HANDOFF_PATTERNS = [
   /\.claude\/handoffs\//i,
   /\bhandoff\s+document\b/i,
   /\bsession\s+handoff\b/i,
+];
+
+// Patterns that indicate the audit trail was already exported/attached
+const AUDIT_PATTERNS = [
+  /\baudit\.mjs\s+(export|attach|summary)\b/i,
+  /\baudit\s+trail\s+(export|attach|post)/i,
+  /\baudit\s+log\s+(export|attach|post)/i,
+  /\bposted?\s+audit/i,
 ];
 
 function readStdin() {
@@ -120,6 +129,21 @@ try {
       `2. Include: current state, files changed, decisions made, blockers, and next steps`,
       `3. Post the handoff summary as a Linear comment so the next agent can find it`,
       `This ensures the next agent can resume your work seamlessly.`,
+    );
+  }
+
+  // Check if an audit log exists and hasn't been exported yet
+  const auditLogExists = existsSync(AUDIT_LOG);
+  const auditExported = AUDIT_PATTERNS.some((re) => re.test(lastMsg));
+
+  if (auditLogExists && !auditExported && taskComplete) {
+    reminders.push(
+      ``,
+      `An audit trail was recorded for this session (.claude/audit/current.jsonl).`,
+      `Before finishing, please export and attach it:`,
+      `1. Run: node scripts/audit.mjs export   (to preview the trail)`,
+      `2. After creating the PR, run: node scripts/audit.mjs attach <pr-number>`,
+      `This posts the audit trail as a PR comment so reviewers can trace your work.`,
     );
   }
 
