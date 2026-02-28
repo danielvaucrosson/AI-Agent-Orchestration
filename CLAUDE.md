@@ -35,6 +35,17 @@ When you receive a task referencing a Linear issue (e.g., DVA-5), or are asked t
 
 6. **Post a completion comment** summarizing what was done using Linear MCP `create_comment` or the CLI fallback.
 
+7. **If the task is incomplete**, generate a handoff document before ending your session:
+   - Write a handoff file to `.claude/handoffs/<ISSUE-ID>.md` following the template in `.claude/handoff-template.md`
+   - Include: current state, files changed, decisions made, blockers, and next steps
+   - Post the handoff summary as a Linear comment so the next agent can find it
+   - The stop hook will remind you if you forget
+
+8. **When resuming an issue**, check for an existing handoff first:
+   - Read `.claude/handoffs/<ISSUE-ID>.md` if it exists
+   - Acknowledge the prior session's state before continuing
+   - After completing the task, clean up the handoff: `node scripts/handoff.mjs clean <ISSUE-ID>`
+
 ### Preferred Tools
 
 **Use Linear MCP tools when available** (they are faster and don't need env vars):
@@ -54,6 +65,15 @@ node scripts/linear.mjs states                         # List states
 ```
 CLI requires `LINEAR_API_KEY` environment variable.
 
+**Handoff utility** (`scripts/handoff.mjs`) — no env vars needed:
+```bash
+node scripts/handoff.mjs check DVA-9        # Check if a handoff exists
+node scripts/handoff.mjs read DVA-9         # Read an existing handoff
+node scripts/handoff.mjs list               # List all active handoffs
+node scripts/handoff.mjs clean DVA-9        # Remove handoff after completion
+node scripts/handoff.mjs template           # Print the handoff template
+```
+
 ### What the GitHub Action Handles (do NOT duplicate)
 
 | Git Event       | Linear Update                              |
@@ -69,6 +89,7 @@ After pushing or opening a PR, the GitHub Action handles status transitions. Do 
 - **Before first push:** Move to "In Progress" and comment your plan
 - **During work (pre-push):** Comment on significant decisions or blockers
 - **After finishing work (pre-push):** Comment a summary of what was accomplished
+- **On incomplete session exit:** Write a handoff document and post the summary to Linear
 
 ## Environment
 
