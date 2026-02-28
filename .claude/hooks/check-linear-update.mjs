@@ -5,11 +5,21 @@
  * a Linear issue and the agent hasn't mentioned updating Linear, it blocks
  * and reminds the agent to update the issue status and post a summary comment.
  *
+ * Also checks whether the task is incomplete and, if so, reminds the agent
+ * to generate a handoff document for session continuity.
+ *
  * Input (stdin): JSON with { stop_hook_active, last_assistant_message, ... }
  * Output (stdout): JSON with { decision, reason } to block, or nothing to allow.
  */
 
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getBranch, extractIssueId } from "./linear-helpers.mjs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const HANDOFFS_DIR = join(__dirname, "..", "handoffs");
 
 // Patterns that indicate the agent already updated Linear this turn
 const UPDATED_PATTERNS = [
@@ -21,6 +31,26 @@ const UPDATED_PATTERNS = [
   /\bcreate_comment\b/i,
 ];
 
+// Patterns that indicate the task was completed (PR created, merged, etc.)
+const COMPLETED_PATTERNS = [
+  /\bpr\s+(created|opened|merged)\b/i,
+  /\bpull\s+request\s+(created|opened|merged)\b/i,
+  /\bgh\s+pr\s+create\b/i,
+  /\bmove[d]?\s+.*\s+to\s+(done|in review)\b/i,
+  /\btask\s+(is\s+)?complete[d]?\b/i,
+  /\bwork\s+(is\s+)?done\b/i,
+  /\ball\s+acceptance\s+criteria\s+(are\s+)?met\b/i,
+];
+
+// Patterns that indicate a handoff was already created
+const HANDOFF_PATTERNS = [
+  /\bhandoff\b.*\b(creat|writ|generat|sav)/i,
+  /\bhandoff\.mjs\b/i,
+  /\.claude\/handoffs\//i,
+  /\bhandoff\s+document\b/i,
+  /\bsession\s+handoff\b/i,
+];
+
 function readStdin() {
   return new Promise((resolve, reject) => {
     let data = "";
@@ -30,6 +60,12 @@ function readStdin() {
     process.stdin.on("error", reject);
     process.stdin.resume();
   });
+}
+
+function handoffExists(issueId) {
+  const normalized = issueId.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+  const path = join(HANDOFFS_DIR, `${normalized}.md`);
+  return existsSync(path);
 }
 
 try {
@@ -53,14 +89,19 @@ try {
 
   // Check if the agent already mentioned updating Linear
   const alreadyUpdated = UPDATED_PATTERNS.some((re) => re.test(lastMsg));
-  if (alreadyUpdated) {
-    process.exit(0);
-  }
 
-  // Block and remind the agent
-  const result = {
-    decision: "block",
-    reason: [
+  // Check if the task appears complete
+  const taskComplete = COMPLETED_PATTERNS.some((re) => re.test(lastMsg));
+
+  // Check if a handoff was already generated
+  const handoffDone =
+    HANDOFF_PATTERNS.some((re) => re.test(lastMsg)) || handoffExists(issueId);
+
+  // Build reminders as needed
+  const reminders = [];
+
+  if (!alreadyUpdated) {
+    reminders.push(
       `You are working on Linear issue ${issueId}.`,
       `Before finishing, please update Linear:`,
       `1. Update the issue status if appropriate using the Linear MCP update_issue tool (set state to "In Progress", "In Review", or "Done")`,
@@ -68,7 +109,27 @@ try {
       `If MCP tools are unavailable, use the CLI fallback:`,
       `   LINEAR_API_KEY="$LINEAR_API_KEY" node scripts/linear.mjs status ${issueId} "In Progress"`,
       `   LINEAR_API_KEY="$LINEAR_API_KEY" node scripts/linear.mjs comment ${issueId} "<summary of work done>"`,
-    ].join("\n"),
+    );
+  }
+
+  if (!taskComplete && !handoffDone) {
+    reminders.push(
+      ``,
+      `The task for ${issueId} appears incomplete. Please generate a handoff document:`,
+      `1. Write a handoff file to .claude/handoffs/${issueId}.md following the template in .claude/handoff-template.md`,
+      `2. Include: current state, files changed, decisions made, blockers, and next steps`,
+      `3. Post the handoff summary as a Linear comment so the next agent can find it`,
+      `This ensures the next agent can resume your work seamlessly.`,
+    );
+  }
+
+  if (reminders.length === 0) {
+    process.exit(0);
+  }
+
+  const result = {
+    decision: "block",
+    reason: reminders.join("\n"),
   };
 
   console.log(JSON.stringify(result));
