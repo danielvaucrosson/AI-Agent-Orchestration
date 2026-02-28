@@ -74,6 +74,16 @@ node scripts/handoff.mjs clean DVA-9        # Remove handoff after completion
 node scripts/handoff.mjs template           # Print the handoff template
 ```
 
+**Task ordering** (`scripts/task-ordering.mjs`) — dependency-aware task selection:
+```bash
+node scripts/task-ordering.mjs next  --team DVA           # Pick the next unblocked task
+node scripts/task-ordering.mjs order --team DVA           # Show all tasks in execution order
+node scripts/task-ordering.mjs check DVA-18               # Check if a task is blocked
+node scripts/task-ordering.mjs graph --team DVA           # Display the dependency graph
+node scripts/task-ordering.mjs next  --project "Agent Orchestration" --json
+```
+Queries Linear for issues and their `blocks`/`blockedBy` relations, builds a dependency graph, detects circular dependencies, and recommends the optimal execution order respecting both dependencies and priority. Requires `LINEAR_API_KEY`.
+
 ### What the GitHub Action Handles (do NOT duplicate)
 
 | Git Event       | Linear Update                              |
