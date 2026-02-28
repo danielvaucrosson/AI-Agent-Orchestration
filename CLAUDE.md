@@ -65,6 +65,16 @@ node scripts/linear.mjs states                         # List states
 ```
 CLI requires `LINEAR_API_KEY` environment variable.
 
+**Code scanner** (`scripts/scan.mjs`) — scans codebase for actionable issues:
+```bash
+node scripts/scan.mjs                        # Scan and print findings
+node scripts/scan.mjs --json                 # Output as JSON
+node scripts/scan.mjs create --dry-run       # Preview Linear issue creation
+node scripts/scan.mjs create                 # Create issues (needs LINEAR_API_KEY)
+```
+Scans for: comment markers (TODO/FIXME/HACK/BUG/XXX), test coverage gaps, and anti-patterns.
+Issues are created with the `auto-detected` label and deduplicated via content hashing.
+
 **Handoff utility** (`scripts/handoff.mjs`) — no env vars needed:
 ```bash
 node scripts/handoff.mjs check DVA-9        # Check if a handoff exists
