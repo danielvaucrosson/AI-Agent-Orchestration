@@ -96,11 +96,13 @@ Queries Linear for issues and their `blocks`/`blockedBy` relations, builds a dep
 
 ### What the GitHub Action Handles (do NOT duplicate)
 
-| Git Event       | Linear Update                              |
-|-----------------|--------------------------------------------|
-| Push to branch  | Issue → **In Progress** + commit link      |
-| PR opened       | Issue → **In Review** + PR attached        |
-| PR merged       | Issue → **Done**                           |
+| Git Event           | Linear Update                              |
+|---------------------|--------------------------------------------|
+| Push to branch      | Issue → **In Progress** + commit link      |
+| PR opened           | Issue → **In Review** + PR attached        |
+| PR merged           | Issue → **Done**                           |
+| PR review + label   | Collects feedback for agent processing     |
+| `/agent fix` comment| Collects feedback for agent processing     |
 
 After pushing or opening a PR, the GitHub Action handles status transitions. Do not manually set "In Review" or "Done" after these events — it would be redundant.
 
@@ -110,6 +112,40 @@ After pushing or opening a PR, the GitHub Action handles status transitions. Do 
 - **During work (pre-push):** Comment on significant decisions or blockers
 - **After finishing work (pre-push):** Comment a summary of what was accomplished
 - **On incomplete session exit:** Write a handoff document and post the summary to Linear
+
+## PR Feedback Loop
+
+When a reviewer leaves comments on an agent-created PR, the feedback can be automatically collected and structured for agent processing.
+
+### Trigger Mechanisms
+
+The `pr-feedback.yml` GitHub Action triggers when:
+- A reviewer submits a review on a PR with the `agent-actionable` label
+- Someone comments `/agent fix` on a PR
+
+### CLI Utility
+
+```bash
+node scripts/pr-feedback.mjs collect --pr 7 --output /tmp/feedback.json   # Fetch review comments
+node scripts/pr-feedback.mjs prompt  --input /tmp/feedback.json            # Generate agent prompt
+node scripts/pr-feedback.mjs summary --input /tmp/feedback.json            # Show summary stats
+node scripts/pr-feedback.mjs reply   --pr 7 --input /tmp/feedback.json     # Post replies
+```
+
+### How It Works
+
+1. Reviewer leaves comments on a PR (either inline on code or general review comments)
+2. Trigger fires: either via `agent-actionable` label + review, or `/agent fix` command
+3. The action collects all unresolved review comments via GitHub API
+4. Comments are categorized by priority (high/medium/low) and type (bug, security, change-request, suggestion, style)
+5. A structured prompt is generated with file paths, line numbers, diff context, and reviewer feedback
+6. The agent (when integrated) addresses each comment, commits fixes, and replies
+
+### Safety
+
+- **Opt-in only:** PRs must have the `agent-actionable` label or someone must comment `/agent fix`
+- **No auto-responses:** The agent doesn't react to every comment
+- **Non-actionable filtering:** LGTM, emoji reactions, and "resolved" markers are automatically skipped
 
 ## Environment
 
