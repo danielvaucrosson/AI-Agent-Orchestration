@@ -5,17 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/audit-pre.mjs\""
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/audit-post.mjs\""
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-pr-check.mjs\""
           }
         ]
       }
