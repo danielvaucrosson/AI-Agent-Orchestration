@@ -84,6 +84,25 @@ node scripts/handoff.mjs clean DVA-9        # Remove handoff after completion
 node scripts/handoff.mjs template           # Print the handoff template
 ```
 
+**Auto-triage** (`scripts/auto-triage.mjs`) — size estimation and issue triage:
+```bash
+node scripts/auto-triage.mjs scan                    # Preview triage results
+node scripts/auto-triage.mjs scan --json             # JSON output
+node scripts/auto-triage.mjs triage --dry-run        # Preview changes
+node scripts/auto-triage.mjs triage                  # Apply labels + comments
+node scripts/auto-triage.mjs triage --team DVA       # Specify team
+```
+Scans Backlog issues for size/complexity signals and applies labels. Idempotent — skips already-triaged issues.
+
+| Label | Scope |
+|-------|-------|
+| `size:small` | < 50 estimated lines of change |
+| `size:medium` | 50-200 estimated lines of change |
+| `size:large` | > 200 estimated lines of change |
+| `needs-clarification` | Issue lacks detail for implementation |
+
+Requires `LINEAR_API_KEY`.
+
 **Task ordering** (`scripts/task-ordering.mjs`) — dependency-aware task selection:
 ```bash
 node scripts/task-ordering.mjs next  --team DVA           # Pick the next unblocked task
