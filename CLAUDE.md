@@ -35,6 +35,9 @@ When you receive a task referencing a Linear issue (e.g., DVA-5), or are asked t
 
 6. **Post a completion comment** summarizing what was done using Linear MCP `create_comment` or the CLI fallback.
 
+   **After creating the PR**, attach the audit trail: `node scripts/audit.mjs attach <pr-number>`
+   This posts a collapsible summary of all agent actions as a PR comment for reviewer visibility.
+
 7. **If the task is incomplete**, generate a handoff document before ending your session:
    - Write a handoff file to `.claude/handoffs/<ISSUE-ID>.md` following the template in `.claude/handoff-template.md`
    - Include: current state, files changed, decisions made, blockers, and next steps
@@ -65,15 +68,15 @@ node scripts/linear.mjs states                         # List states
 ```
 CLI requires `LINEAR_API_KEY` environment variable.
 
-**Code scanner** (`scripts/scan.mjs`) — scans codebase for actionable issues:
+**Audit trail** (`scripts/audit.mjs`) — auto-populated by hooks, no env vars needed:
 ```bash
-node scripts/scan.mjs                        # Scan and print findings
-node scripts/scan.mjs --json                 # Output as JSON
-node scripts/scan.mjs create --dry-run       # Preview Linear issue creation
-node scripts/scan.mjs create                 # Create issues (needs LINEAR_API_KEY)
+node scripts/audit.mjs init                           # Start a new audit session
+node scripts/audit.mjs log decision "Chose X over Y"  # Add manual log entry
+node scripts/audit.mjs summary                        # Print session stats
+node scripts/audit.mjs export                         # Export full trail as Markdown
+node scripts/audit.mjs attach 5                       # Post trail as PR #5 comment
+node scripts/audit.mjs clear                          # Remove session log
 ```
-Scans for: comment markers (TODO/FIXME/HACK/BUG/XXX), test coverage gaps, and anti-patterns.
-Issues are created with the `auto-detected` label and deduplicated via content hashing.
 
 **Handoff utility** (`scripts/handoff.mjs`) — no env vars needed:
 ```bash
@@ -113,39 +116,15 @@ After pushing or opening a PR, the GitHub Action handles status transitions. Do 
 - **After finishing work (pre-push):** Comment a summary of what was accomplished
 - **On incomplete session exit:** Write a handoff document and post the summary to Linear
 
-## PR Feedback Loop
+## Audit Trail
 
-When a reviewer leaves comments on an agent-created PR, the feedback can be automatically collected and structured for agent processing.
+Agent sessions are automatically logged by `PreToolUse` and `PostToolUse` hooks. The raw log is stored at `.claude/audit/current.jsonl` (gitignored). Key points:
 
-### Trigger Mechanisms
-
-The `pr-feedback.yml` GitHub Action triggers when:
-- A reviewer submits a review on a PR with the `agent-actionable` label
-- Someone comments `/agent fix` on a PR
-
-### CLI Utility
-
-```bash
-node scripts/pr-feedback.mjs collect --pr 7 --output /tmp/feedback.json   # Fetch review comments
-node scripts/pr-feedback.mjs prompt  --input /tmp/feedback.json            # Generate agent prompt
-node scripts/pr-feedback.mjs summary --input /tmp/feedback.json            # Show summary stats
-node scripts/pr-feedback.mjs reply   --pr 7 --input /tmp/feedback.json     # Post replies
-```
-
-### How It Works
-
-1. Reviewer leaves comments on a PR (either inline on code or general review comments)
-2. Trigger fires: either via `agent-actionable` label + review, or `/agent fix` command
-3. The action collects all unresolved review comments via GitHub API
-4. Comments are categorized by priority (high/medium/low) and type (bug, security, change-request, suggestion, style)
-5. A structured prompt is generated with file paths, line numbers, diff context, and reviewer feedback
-6. The agent (when integrated) addresses each comment, commits fixes, and replies
-
-### Safety
-
-- **Opt-in only:** PRs must have the `agent-actionable` label or someone must comment `/agent fix`
-- **No auto-responses:** The agent doesn't react to every comment
-- **Non-actionable filtering:** LGTM, emoji reactions, and "resolved" markers are automatically skipped
+- **Automatic:** Tool invocations are captured automatically — no manual action needed
+- **Manual entries:** Use `node scripts/audit.mjs log <category> <message>` to log decisions, blockers, or architectural notes that hooks can't capture
+- **Export:** Run `node scripts/audit.mjs export` to generate a Markdown summary
+- **PR attachment:** Run `node scripts/audit.mjs attach <pr-number>` after creating a PR to post the audit trail as a collapsible comment
+- **Session lifecycle:** Logs are cleared when you run `init` or `clear`. The stop hook will remind you to export before finishing.
 
 ## Environment
 
