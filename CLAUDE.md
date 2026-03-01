@@ -71,6 +71,16 @@ node scripts/linear.mjs states                         # List states
 ```
 CLI requires `LINEAR_API_KEY` environment variable.
 
+**Audit trail** (`scripts/audit.mjs`) — auto-populated by hooks, no env vars needed:
+```bash
+node scripts/audit.mjs init                           # Start a new audit session
+node scripts/audit.mjs log decision "Chose X over Y"  # Add manual log entry
+node scripts/audit.mjs summary                        # Print session stats
+node scripts/audit.mjs export                         # Export full trail as Markdown
+node scripts/audit.mjs attach 5                       # Post trail as PR #5 comment
+node scripts/audit.mjs clear                          # Remove session log
+```
+
 **Handoff utility** (`scripts/handoff.mjs`) — no env vars needed:
 ```bash
 node scripts/handoff.mjs check DVA-9        # Check if a handoff exists
@@ -106,11 +116,13 @@ node scripts/pre-pr-review.mjs --help              # Show usage
 
 ### What the GitHub Action Handles (do NOT duplicate)
 
-| Git Event       | Linear Update                              |
-|-----------------|--------------------------------------------|
-| Push to branch  | Issue → **In Progress** + commit link      |
-| PR opened       | Issue → **In Review** + PR attached        |
-| PR merged       | Issue → **Done**                           |
+| Git Event           | Linear Update                              |
+|---------------------|--------------------------------------------|
+| Push to branch      | Issue → **In Progress** + commit link      |
+| PR opened           | Issue → **In Review** + PR attached        |
+| PR merged           | Issue → **Done**                           |
+| PR review + label   | Collects feedback for agent processing     |
+| `/agent fix` comment| Collects feedback for agent processing     |
 
 After pushing or opening a PR, the GitHub Action handles status transitions. Do not manually set "In Review" or "Done" after these events — it would be redundant.
 
@@ -120,6 +132,16 @@ After pushing or opening a PR, the GitHub Action handles status transitions. Do 
 - **During work (pre-push):** Comment on significant decisions or blockers
 - **After finishing work (pre-push):** Comment a summary of what was accomplished
 - **On incomplete session exit:** Write a handoff document and post the summary to Linear
+
+## Audit Trail
+
+Agent sessions are automatically logged by `PreToolUse` and `PostToolUse` hooks. The raw log is stored at `.claude/audit/current.jsonl` (gitignored). Key points:
+
+- **Automatic:** Tool invocations are captured automatically — no manual action needed
+- **Manual entries:** Use `node scripts/audit.mjs log <category> <message>` to log decisions, blockers, or architectural notes that hooks can't capture
+- **Export:** Run `node scripts/audit.mjs export` to generate a Markdown summary
+- **PR attachment:** Run `node scripts/audit.mjs attach <pr-number>` after creating a PR to post the audit trail as a collapsible comment
+- **Session lifecycle:** Logs are cleared when you run `init` or `clear`. The stop hook will remind you to export before finishing.
 
 ## Environment
 

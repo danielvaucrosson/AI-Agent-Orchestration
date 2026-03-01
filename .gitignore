@@ -22,6 +22,10 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# Audit trail session logs (raw JSONL — summaries are exported separately)
+.claude/audit/*.jsonl
+.claude/audit/_pr-comment.md
+
 # Python
 __pycache__/
 *.py[cod]
