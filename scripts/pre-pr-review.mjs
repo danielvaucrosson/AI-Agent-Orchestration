@@ -89,6 +89,11 @@ export function gateSecurity(changedFiles) {
     { pattern: /\bAKIA[A-Z0-9]{16}\b/g, label: "AWS access key" },
   ];
 
+  // Files that intentionally contain fake secret patterns (test fixtures)
+  const SECURITY_ALLOWLIST = new Set([
+    "tests/pre-pr-review.test.mjs",
+  ]);
+
   const UNSAFE_PATTERNS = [
     { pattern: /eval\s*\(/g, label: "Use of eval()", extensions: new Set([".mjs", ".js", ".ts"]) },
     { pattern: /innerHTML\s*=/g, label: "innerHTML assignment (XSS risk)", extensions: new Set([".mjs", ".js", ".ts", ".tsx", ".jsx"]) },
@@ -117,11 +122,16 @@ export function gateSecurity(changedFiles) {
 
     const ext = extname(filePath);
 
-    // Check for secrets
-    for (const { pattern, label } of SECRET_PATTERNS) {
-      pattern.lastIndex = 0;
-      if (pattern.test(content)) {
-        findings.push({ file: filePath, issue: label, severity: "critical" });
+    // Normalize path separators for cross-platform allowlist matching
+    const normalizedPath = filePath.replace(/\\/g, "/");
+
+    // Check for secrets (skip allowlisted files with intentional test fixtures)
+    if (!SECURITY_ALLOWLIST.has(normalizedPath)) {
+      for (const { pattern, label } of SECRET_PATTERNS) {
+        pattern.lastIndex = 0;
+        if (pattern.test(content)) {
+          findings.push({ file: filePath, issue: label, severity: "critical" });
+        }
       }
     }
 
