@@ -18,6 +18,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Generated dashboard output
+metrics/
+
 # Logs
 *.log
 npm-debug.log*
