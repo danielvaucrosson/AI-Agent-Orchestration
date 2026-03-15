@@ -80,3 +80,24 @@ export function bisectCulprit(merges, testFn, maxIterations = MAX_BISECT_ITERATI
 
   return merges[lo];
 }
+
+/**
+ * Queries GitHub Actions API for the last successful run of the rollback workflow.
+ * Uses `conclusion=success` (not `status=success`) to filter by outcome.
+ * Returns the head SHA of that run, or null if none found.
+ * Accepts optional execFn for testing.
+ */
+export function findLastGreenSha(execFn = null) {
+  const run = execFn || (() => execSync(
+    'gh api "/repos/{owner}/{repo}/actions/workflows/rollback.yml/runs?branch=main&conclusion=success&per_page=5" --jq ".workflow_runs | map({conclusion, headSha: .head_sha})"',
+    { encoding: "utf-8", cwd: PROJECT_ROOT }
+  ));
+
+  try {
+    const data = JSON.parse(run());
+    const success = data.find((r) => r.conclusion === "success");
+    return success ? success.headSha : null;
+  } catch {
+    return null;
+  }
+}

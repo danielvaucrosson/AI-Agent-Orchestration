@@ -5,6 +5,7 @@ import {
   extractIssueId,
   runTestsWithRetry,
   bisectCulprit,
+  findLastGreenSha,
 } from "../scripts/rollback.mjs";
 
 describe("extractIssueId", () => {
@@ -157,5 +158,38 @@ describe("bisectCulprit", () => {
     assert.equal(result.sha, "m32");
     assert.equal(result.skippedBisection, true);
     assert.equal(testCallCount, 0);
+  });
+});
+
+describe("findLastGreenSha", () => {
+  it("returns SHA from last successful workflow run", () => {
+    const execMock = () => JSON.stringify([
+      { conclusion: "success", headSha: "abc1234def5678" },
+    ]);
+    const result = findLastGreenSha(execMock);
+    assert.equal(result, "abc1234def5678");
+  });
+
+  it("skips failed runs and returns first success", () => {
+    const execMock = () => JSON.stringify([
+      { conclusion: "failure", headSha: "bad1" },
+      { conclusion: "success", headSha: "good1" },
+    ]);
+    const result = findLastGreenSha(execMock);
+    assert.equal(result, "good1");
+  });
+
+  it("returns null when no successful runs exist", () => {
+    const execMock = () => JSON.stringify([
+      { conclusion: "failure", headSha: "bad1" },
+    ]);
+    const result = findLastGreenSha(execMock);
+    assert.equal(result, null);
+  });
+
+  it("returns null when API returns empty array", () => {
+    const execMock = () => "[]";
+    const result = findLastGreenSha(execMock);
+    assert.equal(result, null);
   });
 });
