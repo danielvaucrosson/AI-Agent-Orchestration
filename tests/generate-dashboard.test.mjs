@@ -8,6 +8,7 @@ import {
   fetchLinearStatus,
   enrichWithLinearStatus,
   buildStaticData,
+  generateStaticHTML,
 } from "../scripts/generate-dashboard.mjs";
 
 // ---------------------------------------------------------------------------
@@ -201,5 +202,124 @@ describe("buildStaticData", () => {
     });
     assert.ok(data.buildTime);
     assert.ok(new Date(data.buildTime).getTime() > 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateStaticHTML
+// ---------------------------------------------------------------------------
+
+describe("generateStaticHTML", () => {
+  const sampleData = {
+    gauges: {
+      running: 1,
+      succeeded: 2,
+      failed: 0,
+      totalSucceeded: 5,
+      totalFailed: 1,
+      dailyUsed: 3,
+      dailyLimit: 4,
+    },
+    activeAgents: [
+      {
+        issueId: "DVA-40",
+        issueTitle: "Filter",
+        status: "In Progress",
+        duration: "5m 23s",
+        runner: "self-hosted",
+        branch: "feature/DVA-40",
+        linearStatus: "In Progress",
+      },
+    ],
+    history: [
+      {
+        issueId: "DVA-38",
+        issueTitle: "Upgrade",
+        success: true,
+        prNumber: 18,
+        prUrl: "https://github.com/test/repo/pull/18",
+        duration: "6m 0s",
+        when: "35 min ago",
+      },
+    ],
+    buildTime: "2026-03-15T12:00:00Z",
+  };
+
+  it("returns a complete HTML document", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(html.startsWith("<!DOCTYPE html>"));
+    assert.ok(html.includes("</html>"));
+  });
+
+  it("embeds DASHBOARD_DATA as JSON", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(html.includes("DASHBOARD_DATA = "));
+    assert.ok(html.includes("DVA-40"));
+  });
+
+  it("includes Agent Control Center title", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(html.includes("Agent Control Center"));
+  });
+
+  it("includes meta refresh tag", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(html.includes('http-equiv="refresh"'));
+    assert.ok(html.includes('content="60"'));
+  });
+
+  it("includes mobile viewport meta", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(html.includes('name="viewport"'));
+  });
+
+  it("includes GitHub-dark theme colors", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(html.includes("#0d1117"));
+    assert.ok(html.includes("#161b22"));
+  });
+
+  it("includes mobile responsive CSS", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(html.includes("max-width: 768px"));
+  });
+
+  it("includes Linear status pill CSS", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(html.includes("pill-linear"));
+  });
+
+  it("renders linearStatus pill in agent cards when present", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(html.includes("renderLinearPill"));
+  });
+
+  it("does NOT include /api/status fetch", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(!html.includes("fetch('/api/status')"));
+    assert.ok(!html.includes('fetch("/api/status")'));
+  });
+
+  it("shows build time in footer", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(html.includes("2026-03-15"));
+  });
+
+  it("escapes < in embedded JSON to prevent script injection", () => {
+    const xssData = {
+      ...sampleData,
+      activeAgents: [
+        {
+          ...sampleData.activeAgents[0],
+          issueTitle: '</script><img onerror=alert(1)>',
+        },
+      ],
+    };
+    const html = generateStaticHTML(xssData);
+    assert.ok(
+      !html.includes("</script><img"),
+      "should not contain raw </script> in JSON"
+    );
+    assert.ok(html.includes("\\u003c"), "should escape < as \\u003c");
   });
 });
