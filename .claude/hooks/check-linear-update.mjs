@@ -71,6 +71,44 @@ function readStdin() {
   });
 }
 
+const TERMINAL_STATES = ["done", "canceled", "cancelled", "duplicate"];
+
+/**
+ * Checks if the Linear issue is in a terminal state (Done, Canceled, Duplicate).
+ * Queries the Linear API directly. Returns true if terminal, false otherwise.
+ * Falls back to false if the API key is missing or the request fails.
+ */
+async function isIssueTerminal(issueId) {
+  try {
+    const apiKey = process.env.LINEAR_API_KEY || "";
+    if (!apiKey) return false;
+
+    const safeId = issueId.replace(/[^A-Za-z0-9-]/g, "");
+    const [teamKey, num] = safeId.split("-");
+    const query = `query {
+      issues(filter: { team: { key: { eq: "${teamKey}" } }, number: { eq: ${parseInt(num, 10)} } }, first: 1) {
+        nodes { state { name } }
+      }
+    }`;
+    const res = await fetch("https://api.linear.app/graphql", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: apiKey,
+      },
+      body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return false;
+
+    const json = await res.json();
+    const stateName = json?.data?.issues?.nodes?.[0]?.state?.name || "";
+    return TERMINAL_STATES.includes(stateName.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
 function handoffExists(issueId) {
   const normalized = issueId.toUpperCase().replace(/[^A-Z0-9-]/g, "");
   const path = join(HANDOFFS_DIR, `${normalized}.md`);
@@ -91,6 +129,12 @@ try {
 
   // No Linear issue on this branch — nothing to do
   if (!issueId) {
+    process.exit(0);
+  }
+
+  // If the issue is already Done/Canceled, skip all reminders
+  const terminalStatus = await isIssueTerminal(issueId);
+  if (terminalStatus) {
     process.exit(0);
   }
 
