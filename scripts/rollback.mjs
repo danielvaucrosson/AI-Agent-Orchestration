@@ -181,3 +181,31 @@ export function createRevertPR(culprit, execFn = null) {
 
   return { prUrl, branchName };
 }
+
+/**
+ * Moves the Linear issue to "In Progress" and posts a failure comment.
+ * Skips if issueId is null.
+ */
+export function updateLinear(issueId, details, execFn = null) {
+  if (!issueId) return;
+  const run = execFn || ((cmd) => execSync(cmd, { encoding: "utf-8", cwd: PROJECT_ROOT }).trim());
+
+  run(`node "${LINEAR_SCRIPT}" status ${issueId} "In Progress"`);
+
+  const truncated = (details.failureOutput || "").substring(0, 1500);
+  const bisectNote = details.usedBisection ? "Bisection was used to isolate this commit." : "Single merge since last green — no bisection needed.";
+  const comment = `Rollback triggered: tests failed on main.\\n\\nCulprit commit: ${details.culpritSha}\\n${bisectNote}\\n\\nFailure output:\\n\`\`\`\\n${truncated}\\n\`\`\``;
+
+  run(`node "${LINEAR_SCRIPT}" comment ${issueId} "${comment.replace(/"/g, '\\"')}"`);
+}
+
+/**
+ * Posts a follow-up Linear comment with the revert PR link.
+ * Skips if issueId is null.
+ */
+export function postRevertLink(issueId, prUrl, execFn = null) {
+  if (!issueId) return;
+  const run = execFn || ((cmd) => execSync(cmd, { encoding: "utf-8", cwd: PROJECT_ROOT }).trim());
+
+  run(`node "${LINEAR_SCRIPT}" comment ${issueId} "Revert PR created: ${prUrl}"`);
+}

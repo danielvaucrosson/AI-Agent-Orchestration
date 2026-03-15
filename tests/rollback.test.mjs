@@ -8,6 +8,8 @@ import {
   findLastGreenSha,
   getMergeCommitsSince,
   createRevertPR,
+  updateLinear,
+  postRevertLink,
 } from "../scripts/rollback.mjs";
 
 describe("extractIssueId", () => {
@@ -288,5 +290,52 @@ describe("createRevertPR", () => {
     const prCmd = commands.find((c) => c.includes("gh pr create"));
     assert.ok(prCmd.includes("Revert:"));
     assert.ok(!prCmd.includes("DVA-"));
+  });
+});
+
+describe("updateLinear", () => {
+  it("calls linear.mjs with correct status and comment", () => {
+    const commands = [];
+    const execMock = (cmd) => { commands.push(cmd); return ""; };
+
+    updateLinear("DVA-5", {
+      failureOutput: "test_math failed",
+      culpritSha: "abc1234",
+      usedBisection: true,
+    }, execMock);
+
+    assert.ok(commands.some((c) => c.includes("linear.mjs") && c.includes("status") && c.includes("DVA-5") && c.includes("In Progress")));
+    assert.ok(commands.some((c) => c.includes("linear.mjs") && c.includes("comment") && c.includes("DVA-5")));
+  });
+
+  it("skips when issueId is null", () => {
+    const commands = [];
+    const execMock = (cmd) => { commands.push(cmd); return ""; };
+
+    updateLinear(null, { failureOutput: "test failed", culpritSha: "abc", usedBisection: false }, execMock);
+    assert.equal(commands.length, 0);
+  });
+});
+
+describe("postRevertLink", () => {
+  it("posts a Linear comment with the revert PR URL", () => {
+    const commands = [];
+    const execMock = (cmd) => { commands.push(cmd); return ""; };
+
+    postRevertLink("DVA-5", "https://github.com/owner/repo/pull/99", execMock);
+
+    assert.equal(commands.length, 1);
+    assert.ok(commands[0].includes("linear.mjs"));
+    assert.ok(commands[0].includes("comment"));
+    assert.ok(commands[0].includes("DVA-5"));
+    assert.ok(commands[0].includes("pull/99"));
+  });
+
+  it("skips when issueId is null", () => {
+    const commands = [];
+    const execMock = (cmd) => { commands.push(cmd); return ""; };
+
+    postRevertLink(null, "https://github.com/owner/repo/pull/99", execMock);
+    assert.equal(commands.length, 0);
   });
 });
