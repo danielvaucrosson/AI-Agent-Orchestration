@@ -8,7 +8,10 @@ import {
   formatCompletedDuration,
   countDailyRuns,
   matchRunsToPRs,
+  formatRelativeTime,
+  buildDashboardData,
   renderDashboard,
+  generateDashboardHTML,
 } from "../scripts/agent-dashboard.mjs";
 
 // ---------------------------------------------------------------------------
@@ -180,24 +183,120 @@ describe("matchRunsToPRs", () => {
 });
 
 // ---------------------------------------------------------------------------
+// formatRelativeTime
+// ---------------------------------------------------------------------------
+
+describe("formatRelativeTime", () => {
+  it("returns 'just now' for very recent timestamps", () => {
+    const now = new Date().toISOString();
+    assert.equal(formatRelativeTime(now), "just now");
+  });
+
+  it("returns minutes for timestamps within an hour", () => {
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    assert.equal(formatRelativeTime(tenMinAgo), "10 min ago");
+  });
+
+  it("returns hours for timestamps within a day", () => {
+    const threeHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    assert.equal(formatRelativeTime(threeHoursAgo), "3h ago");
+  });
+
+  it("returns days for older timestamps", () => {
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    assert.equal(formatRelativeTime(twoDaysAgo), "2d ago");
+  });
+
+  it("returns empty string for null input", () => {
+    assert.equal(formatRelativeTime(null), "");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildDashboardData
+// ---------------------------------------------------------------------------
+
+describe("buildDashboardData", () => {
+  const now = new Date().toISOString();
+  const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+  it("builds gauges from raw runs", () => {
+    const data = buildDashboardData({
+      runs: [
+        { id: 1, status: "in_progress", created_at: now, run_started_at: fiveMinAgo, inputs: { issue_id: "DVA-40", issue_title: "Test" } },
+        { id: 2, status: "completed", conclusion: "success", created_at: now, run_started_at: fiveMinAgo, updated_at: now, inputs: { issue_id: "DVA-38", issue_title: "Upgrade" } },
+        { id: 3, status: "completed", conclusion: "failure", created_at: now, run_started_at: fiveMinAgo, updated_at: now, inputs: { issue_id: "DVA-39", issue_title: "Branch" } },
+      ],
+      prs: [],
+    });
+    assert.equal(data.gauges.running, 1);
+    assert.equal(data.gauges.succeeded, 1);
+    assert.equal(data.gauges.failed, 1);
+    assert.equal(data.gauges.dailyUsed, 3);
+    assert.equal(data.gauges.dailyLimit, 4);
+  });
+
+  it("builds active agents list", () => {
+    const data = buildDashboardData({
+      runs: [
+        {
+          id: 1, status: "in_progress", created_at: now,
+          run_started_at: fiveMinAgo, head_branch: "feature/DVA-40",
+          runner_name: "self-hosted",
+          inputs: { issue_id: "DVA-40", issue_title: "Filter archived" },
+        },
+      ],
+      prs: [],
+    });
+    assert.equal(data.activeAgents.length, 1);
+    assert.equal(data.activeAgents[0].issueId, "DVA-40");
+    assert.equal(data.activeAgents[0].status, "In Progress");
+    assert.equal(data.activeAgents[0].branch, "feature/DVA-40");
+  });
+
+  it("builds history with PR links", () => {
+    const data = buildDashboardData({
+      runs: [
+        {
+          id: 10, status: "completed", conclusion: "success",
+          created_at: now, run_started_at: fiveMinAgo, updated_at: now,
+          inputs: { issue_id: "DVA-38", issue_title: "Upgrade Actions" },
+        },
+      ],
+      prs: [{ number: 18, title: "DVA-38: Upgrade", headRefName: "feature/DVA-38" }],
+    });
+    assert.equal(data.history.length, 1);
+    assert.equal(data.history[0].success, true);
+    assert.equal(data.history[0].prNumber, 18);
+    assert.ok(data.history[0].prUrl.includes("/pull/18"));
+  });
+
+  it("handles empty input", () => {
+    const data = buildDashboardData({ runs: [], prs: [] });
+    assert.equal(data.gauges.running, 0);
+    assert.equal(data.activeAgents.length, 0);
+    assert.equal(data.history.length, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // renderDashboard
 // ---------------------------------------------------------------------------
 
 describe("renderDashboard", () => {
   it("renders with active runs", () => {
-    const output = renderDashboard({
-      active: [
+    const data = buildDashboardData({
+      runs: [
         {
-          status: "in_progress",
+          id: 1, status: "in_progress",
           run_started_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+          created_at: new Date().toISOString(),
           inputs: { issue_id: "DVA-40", issue_title: "Filter archived" },
         },
       ],
-      completed: [],
-      dailyCount: 3,
-      dailyLimit: 4,
-      prMap: new Map(),
+      prs: [],
     });
+    const output = renderDashboard(data);
     assert.ok(output.includes("AGENT DASHBOARD"));
     assert.ok(output.includes("DVA-40"));
     assert.ok(output.includes("Filter archived"));
@@ -205,70 +304,95 @@ describe("renderDashboard", () => {
   });
 
   it("renders with completed runs and PR links", () => {
-    const runId = 999;
-    const output = renderDashboard({
-      active: [],
-      completed: [
+    const data = buildDashboardData({
+      runs: [
         {
-          id: runId,
-          status: "completed",
-          conclusion: "success",
+          id: 999, status: "completed", conclusion: "success",
           run_started_at: "2026-03-15T10:00:00Z",
           updated_at: "2026-03-15T10:06:00Z",
+          created_at: new Date().toISOString(),
           inputs: { issue_id: "DVA-38", issue_title: "Upgrade v5" },
         },
       ],
-      dailyCount: 1,
-      dailyLimit: 4,
-      prMap: new Map([[runId, { number: 18, title: "DVA-38: Upgrade" }]]),
+      prs: [{ number: 18, title: "DVA-38: Upgrade", headRefName: "feature/DVA-38" }],
     });
+    const output = renderDashboard(data);
     assert.ok(output.includes("OK"));
     assert.ok(output.includes("DVA-38"));
     assert.ok(output.includes("PR #18"));
   });
 
   it("renders empty state", () => {
-    const output = renderDashboard({
-      active: [],
-      completed: [],
-      dailyCount: 0,
-      dailyLimit: 4,
-      prMap: new Map(),
-    });
+    const data = buildDashboardData({ runs: [], prs: [] });
+    const output = renderDashboard(data);
     assert.ok(output.includes("No agents currently running"));
     assert.ok(output.includes("No recent completions"));
   });
 
   it("shows FAIL status and no PR for failed runs", () => {
-    const output = renderDashboard({
-      active: [],
-      completed: [
+    const data = buildDashboardData({
+      runs: [
         {
-          id: 500,
-          status: "completed",
-          conclusion: "failure",
+          id: 500, status: "completed", conclusion: "failure",
           run_started_at: "2026-03-15T10:00:00Z",
           updated_at: "2026-03-15T10:02:48Z",
+          created_at: new Date().toISOString(),
           inputs: { issue_id: "DVA-40", issue_title: "Filter archived" },
         },
       ],
-      dailyCount: 2,
-      dailyLimit: 4,
-      prMap: new Map(),
+      prs: [],
     });
+    const output = renderDashboard(data);
     assert.ok(output.includes("FAIL"));
     assert.ok(output.includes("no PR"));
   });
 
   it("includes footer with refresh instructions", () => {
-    const output = renderDashboard({
-      active: [],
-      completed: [],
-      dailyCount: 0,
-      dailyLimit: 4,
-      prMap: new Map(),
-    });
+    const data = buildDashboardData({ runs: [], prs: [] });
+    const output = renderDashboard(data);
     assert.ok(output.includes("q = quit"));
     assert.ok(output.includes("r = refresh now"));
+  });
+
+  it("shows web URL when provided", () => {
+    const data = buildDashboardData({ runs: [], prs: [] });
+    const output = renderDashboard(data, { webUrl: "http://localhost:3847" });
+    assert.ok(output.includes("http://localhost:3847"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateDashboardHTML
+// ---------------------------------------------------------------------------
+
+describe("generateDashboardHTML", () => {
+  it("returns a complete HTML document", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.startsWith("<!DOCTYPE html>"));
+    assert.ok(html.includes("Agent Control Center"));
+    assert.ok(html.includes("/api/status"));
+  });
+
+  it("includes GitHub-dark theme colors", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("#0d1117"));
+    assert.ok(html.includes("#161b22"));
+    assert.ok(html.includes("#30363d"));
+    assert.ok(html.includes("#58a6ff"));
+    assert.ok(html.includes("#3fb950"));
+    assert.ok(html.includes("#f85149"));
+    assert.ok(html.includes("#d29922"));
+  });
+
+  it("includes auto-refresh JavaScript", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("setInterval(refresh, 10000)"));
+  });
+
+  it("includes gauge, agent, and history rendering", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("renderGauges"));
+    assert.ok(html.includes("renderAgents"));
+    assert.ok(html.includes("renderHistory"));
   });
 });
