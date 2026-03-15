@@ -115,6 +115,7 @@ agent-worker.yml receives workflow_dispatch
    claude -p "Pick up ${{ inputs.issue_id }}: ${{ inputs.issue_title }}. Follow the workflow protocol in CLAUDE.md. This is an automated scheduled run."
    ```
    Environment variables: `ANTHROPIC_API_KEY`, `LINEAR_API_KEY`, `GITHUB_TOKEN`.
+   Timeout: `timeout-minutes: 180` (3-hour cap to avoid runaway sessions; well under GitHub's 6-hour maximum).
 5. **Post-run: success** — Write a GitHub Actions job summary with: issue ID/title, link to Linear issue, run duration, "completed successfully."
 6. **Post-run: failure** — In an `if: failure()` step:
    - Check if a handoff file exists at `.claude/handoffs/${{ inputs.issue_id }}.md`
@@ -159,7 +160,7 @@ Task selection reuses `task-ordering.mjs next` which already implements:
 
 The scheduler script (`agent-scheduler.mjs`) wraps this with additional filtering:
 - **Status filter:** Only "Todo" issues (not "Backlog" — those aren't ready for work)
-- **Failed task filter:** Skip issues where the `agent-failed` label exists AND retry count >= 2 (tracked via label description or a structured comment)
+- **Failed task filter:** Skip issues where the `agent-failed` label exists AND retry count >= 2 (tracked via structured comment — see Retry Tracking below)
 
 ### 4. Retry Tracking
 
@@ -223,11 +224,11 @@ When a human intervenes (removes the label, or the issue is manually completed),
 | `AGENT_MAX_DAILY_RUNS` | `2` | Maximum agent-worker dispatches per 24 hours |
 
 **Repository secrets:**
-| Secret | Purpose |
-|--------|---------|
-| `ANTHROPIC_API_KEY` | Claude Code API access (worker only) |
-| `LINEAR_API_KEY` | Linear API for status updates and comments |
-| `GITHUB_TOKEN` | Auto-provided, used for `gh` CLI and API calls |
+| Secret | Purpose | Used by |
+|--------|---------|---------|
+| `ANTHROPIC_API_KEY` | Claude Code API access | Worker only |
+| `LINEAR_API_KEY` | Linear API for status updates and comments | Both scheduler (dispatch notification) and worker |
+| `GITHUB_TOKEN` | Auto-provided, used for `gh` CLI and API calls | Both |
 
 ## Interaction with Existing Workflows
 
