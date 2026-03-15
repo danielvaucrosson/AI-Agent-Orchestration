@@ -162,6 +162,25 @@ if (linearApiKey && ghResults.length > 0) {
   console.log("No LINEAR_API_KEY — skipping Linear issue creation");
 }
 
+// ── Update GitHub issues with Linear links ─────────────────────────────
+
+for (const lr of linearResults) {
+  const ghItem = ghResults.find((g) => g.file === lr.file);
+  if (!ghItem) continue;
+
+  try {
+    const bodyWithLink = `${ghItem.body}\n\n---\nLinear issue: [${lr.identifier}](${lr.url})`;
+    const bodyFile = join(tmpdir(), `issue-link-${Date.now()}.md`);
+    writeFileSync(bodyFile, bodyWithLink);
+    execFileSync("gh", ["issue", "edit", ghItem.number, "--body-file", bodyFile], {
+      encoding: "utf8",
+    });
+    console.log(`Updated GitHub #${ghItem.number} with Linear link ${lr.identifier}`);
+  } catch (err) {
+    console.error(`Failed to update GitHub #${ghItem.number} with Linear link: ${err.stderr || err.message}`);
+  }
+}
+
 // ── Job summary ────────────────────────────────────────────────────────
 
 const summaryFile = process.env.GITHUB_STEP_SUMMARY;
