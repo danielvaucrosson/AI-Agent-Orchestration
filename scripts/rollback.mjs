@@ -209,3 +209,49 @@ export function postRevertLink(issueId, prUrl, execFn = null) {
 
   run(`node "${LINEAR_SCRIPT}" comment ${issueId} "Revert PR created: ${prUrl}"`);
 }
+
+/**
+ * Finds the PR associated with a commit and posts a failure comment.
+ * Skips if no PR is found for the commit.
+ */
+export function commentOnOriginalPR(commitSha, details, execFn = null) {
+  const run = execFn || ((cmd) => execSync(cmd, { encoding: "utf-8", cwd: PROJECT_ROOT }).trim());
+
+  // Look up the PR number from the commit SHA
+  let prNumber;
+  try {
+    const pullsJson = run(`gh api "/repos/{owner}/{repo}/commits/${commitSha}/pulls" --jq "map({number})"`);
+    const pulls = JSON.parse(pullsJson);
+    if (!pulls.length) {
+      console.log(`No PR found for commit ${commitSha} — skipping GitHub comment.`);
+      return;
+    }
+    prNumber = pulls[0].number;
+  } catch {
+    console.log(`Failed to look up PR for commit ${commitSha} — skipping GitHub comment.`);
+    return;
+  }
+
+  const truncated = (details.failureOutput || "").substring(0, 1500);
+  const issueNote = details.issueId
+    ? `Linear issue: [${details.issueId}](https://linear.app/dvaucrosson/issue/${details.issueId})`
+    : "";
+
+  const body = [
+    "## Automated Rollback Notification",
+    "",
+    "Tests failed on `main` after this PR was merged.",
+    "",
+    `Revert PR: ${details.revertPrUrl}`,
+    issueNote,
+    "",
+    "<details><summary>Failure output</summary>",
+    "",
+    "```",
+    truncated,
+    "```",
+    "</details>",
+  ].filter(Boolean).join("\n");
+
+  run(`gh pr comment ${prNumber} --body "${body.replace(/"/g, '\\"')}"`);
+}

@@ -10,6 +10,7 @@ import {
   createRevertPR,
   updateLinear,
   postRevertLink,
+  commentOnOriginalPR,
 } from "../scripts/rollback.mjs";
 
 describe("extractIssueId", () => {
@@ -337,5 +338,44 @@ describe("postRevertLink", () => {
 
     postRevertLink(null, "https://github.com/owner/repo/pull/99", execMock);
     assert.equal(commands.length, 0);
+  });
+});
+
+describe("commentOnOriginalPR", () => {
+  it("looks up the PR and posts a comment", () => {
+    const commands = [];
+    const execMock = (cmd) => {
+      commands.push(cmd);
+      if (cmd.includes("commits") && cmd.includes("pulls")) {
+        return JSON.stringify([{ number: 5 }]);
+      }
+      return "";
+    };
+
+    commentOnOriginalPR("abc1234", {
+      failureOutput: "test failed",
+      revertPrUrl: "https://github.com/owner/repo/pull/99",
+      issueId: "DVA-5",
+    }, execMock);
+
+    assert.ok(commands.some((c) => c.includes("commits/abc1234/pulls")));
+    assert.ok(commands.some((c) => c.includes("gh pr comment 5")));
+  });
+
+  it("skips comment when no PR found for commit", () => {
+    const commands = [];
+    const execMock = (cmd) => {
+      commands.push(cmd);
+      if (cmd.includes("commits") && cmd.includes("pulls")) return "[]";
+      return "";
+    };
+
+    commentOnOriginalPR("abc1234", {
+      failureOutput: "test failed",
+      revertPrUrl: "https://github.com/owner/repo/pull/99",
+      issueId: null,
+    }, execMock);
+
+    assert.ok(!commands.some((c) => c.includes("gh pr comment")));
   });
 });
