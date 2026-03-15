@@ -47,3 +47,40 @@ describe("checkRateLimit", () => {
     assert.equal(result.currentCount, 3);
   });
 });
+
+describe("parseRetryCount", () => {
+  it("returns 0 when no retry comments exist", () => {
+    const comments = [
+      { body: "Starting work on this issue" },
+      { body: "PR opened: https://github.com/..." },
+    ];
+    assert.equal(parseRetryCount(comments), 0);
+  });
+
+  it("parses retry count from structured comment", () => {
+    const comments = [
+      { body: "Starting work" },
+      { body: "[agent-retry: 1]" },
+    ];
+    assert.equal(parseRetryCount(comments), 1);
+  });
+
+  it("returns the highest retry count when multiple exist", () => {
+    const comments = [
+      { body: "[agent-retry: 1]" },
+      { body: "[agent-retry: 2]" },
+    ];
+    assert.equal(parseRetryCount(comments), 2);
+  });
+
+  it("handles retry marker embedded in longer text", () => {
+    const comments = [
+      { body: "Agent failed. [agent-retry: 3] Will skip next time." },
+    ];
+    assert.equal(parseRetryCount(comments), 3);
+  });
+
+  it("returns 0 for empty comments array", () => {
+    assert.equal(parseRetryCount([]), 0);
+  });
+});

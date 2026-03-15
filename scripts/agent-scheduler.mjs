@@ -33,7 +33,26 @@ export function checkRateLimit(runs, maxDaily) {
   };
 }
 
-// Temporary stubs — replaced in Tasks 2 and 3
-export function parseRetryCount() { throw new Error("Not implemented"); }
+/**
+ * Parse the retry count from an issue's comments.
+ * Looks for structured markers like `[agent-retry: N]`.
+ *
+ * @param {object[]} comments - Array of comment objects with `body` string
+ * @returns {number} The highest retry count found, or 0
+ */
+export function parseRetryCount(comments) {
+  let maxRetry = 0;
+  const pattern = /\[agent-retry:\s*(\d+)\]/;
+  for (const comment of comments) {
+    const match = comment.body.match(pattern);
+    if (match) {
+      const count = parseInt(match[1], 10);
+      if (count > maxRetry) maxRetry = count;
+    }
+  }
+  return maxRetry;
+}
+
+// Temporary stubs — replaced in Task 3
 export function filterForScheduler() { throw new Error("Not implemented"); }
 export function setOutput() { throw new Error("Not implemented"); }
