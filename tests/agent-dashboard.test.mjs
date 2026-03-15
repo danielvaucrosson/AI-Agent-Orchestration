@@ -233,7 +233,7 @@ describe("buildDashboardData", () => {
     assert.equal(data.gauges.succeeded, 1);
     assert.equal(data.gauges.failed, 1);
     assert.equal(data.gauges.dailyUsed, 3);
-    assert.equal(data.gauges.dailyLimit, 4);
+    assert.equal(data.gauges.dailyLimit, 2);
   });
 
   it("builds active agents list", () => {
@@ -269,6 +269,18 @@ describe("buildDashboardData", () => {
     assert.equal(data.history[0].success, true);
     assert.equal(data.history[0].prNumber, 18);
     assert.ok(data.history[0].prUrl.includes("/pull/18"));
+  });
+
+  it("uses AGENT_MAX_DAILY_RUNS env var for dailyLimit", () => {
+    const orig = process.env.AGENT_MAX_DAILY_RUNS;
+    try {
+      process.env.AGENT_MAX_DAILY_RUNS = "6";
+      const data = buildDashboardData({ runs: [], prs: [] });
+      assert.equal(data.gauges.dailyLimit, 6);
+    } finally {
+      if (orig === undefined) delete process.env.AGENT_MAX_DAILY_RUNS;
+      else process.env.AGENT_MAX_DAILY_RUNS = orig;
+    }
   });
 
   it("handles empty input", () => {
