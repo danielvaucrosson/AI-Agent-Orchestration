@@ -1,4 +1,5 @@
 name: Agent Worker
+run-name: "Agent Worker: ${{ inputs.issue_id }} — ${{ inputs.issue_title }}"
 
 on:
   workflow_dispatch:
