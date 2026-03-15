@@ -11,7 +11,7 @@
 
 import { execSync } from "node:child_process";
 import { existsSync, appendFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 /**
  * Check if dispatching another agent run is allowed under the rate limit.
@@ -129,7 +129,8 @@ async function fetchIssueComments(identifier) {
     const issue = await client.issue(identifier);
     const comments = await issue.comments();
     return comments.nodes.map((c) => ({ body: c.body }));
-  } catch {
+  } catch (err) {
+    console.warn(`Warning: could not fetch comments for ${identifier}: ${err.message}`);
     return [];
   }
 }
@@ -158,9 +159,9 @@ function parseArgs(argv) {
   return args;
 }
 
-// ESM-safe main guard using fileURLToPath
-const __filename = fileURLToPath(import.meta.url);
-const isMain = process.argv[1] && __filename === process.argv[1];
+// ESM-safe main guard — matches project pattern (see task-ordering.mjs)
+const isMain = process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMain) {
   const args = parseArgs(process.argv.slice(2));
