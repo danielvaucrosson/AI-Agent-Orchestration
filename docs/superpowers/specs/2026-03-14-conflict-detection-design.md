@@ -33,7 +33,7 @@ No changes to existing files. Follows patterns established by `scan.mjs`, `auto-
 For each branch (including the pushed one):
 
 ```
-git diff --name-only $(git merge-base origin/main <branch>)...<branch>
+git diff --name-only $(git merge-base origin/main <branch>)..<branch>
 ```
 
 Result: `Map<branch, Set<files>>`
@@ -50,7 +50,7 @@ Set intersection between the pushed branch's files and each other active branch'
 | `warning` | Same file modified by both branches |
 | `critical` | Same file, overlapping line ranges |
 
-For `critical` detection: run `git diff --unified=0` on each shared file against the merge base to extract touched line ranges, then check for range overlap.
+For `critical` detection: run `git diff --unified=0 <merge-base-sha> <branch> -- <file>` on each shared file to extract touched line ranges from hunk headers (`@@ -a,b +c,d @@`). Parse start line and count from each side (note: Git omits the count when it's 1, e.g., `+42` means a single line at 42). Check whether the line ranges from both branches overlap. The hunk header parser must be unit-tested independently.
 
 ### Step 5 — Post warnings to Linear
 
@@ -174,5 +174,6 @@ Test cases:
 - Branch discovery with staleness filtering
 - File overlap detection and severity classification
 - Line range overlap calculation (including non-overlapping ranges)
+- Hunk header parsing (`@@ -a,b +c,d @@`) including single-line hunks where count is omitted
 - Deduplication hash generation and comment skipping
 - Edge cases: no active branches, no overlaps, missing issue IDs, stale branches, unreachable merge base
