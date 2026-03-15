@@ -82,3 +82,50 @@ export async function fetchRecentPRs(repo, fetchFn = fetch) {
     return [];
   }
 }
+
+// ---------------------------------------------------------------------------
+// Linear API enrichment
+// ---------------------------------------------------------------------------
+
+export async function fetchLinearStatus(issueIdentifier, fetchFn = fetch) {
+  try {
+    // Parse "DVA-40" into team key "DVA" and number 40
+    const match = issueIdentifier?.match(/^([A-Z]{1,5})-(\d+)$/);
+    if (!match) return null;
+    const [, teamKey, numStr] = match;
+    const issueNumber = parseInt(numStr, 10);
+
+    const res = await fetchFn("https://api.linear.app/graphql", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: process.env.LINEAR_API_KEY || "",
+      },
+      body: JSON.stringify({
+        query: `query ($teamKey: String!, $number: Float!) {
+          issues(filter: { team: { key: { eq: $teamKey } }, number: { eq: $number } }, first: 1) {
+            nodes { state { name } }
+          }
+        }`,
+        variables: { teamKey, number: issueNumber },
+      }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.data?.issues?.nodes?.[0]?.state?.name || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function enrichWithLinearStatus(
+  activeAgents,
+  fetchStatusFn = fetchLinearStatus
+) {
+  return Promise.all(
+    activeAgents.map(async (agent) => ({
+      ...agent,
+      linearStatus: await fetchStatusFn(agent.issueId),
+    }))
+  );
+}

@@ -5,6 +5,8 @@ import {
   parseArgs,
   fetchWorkflowRuns,
   fetchRecentPRs,
+  fetchLinearStatus,
+  enrichWithLinearStatus,
 } from "../scripts/generate-dashboard.mjs";
 
 // ---------------------------------------------------------------------------
@@ -71,5 +73,72 @@ describe("fetchRecentPRs", () => {
     const mockFetch = async () => ({ ok: false });
     const prs = await fetchRecentPRs("owner/repo", mockFetch);
     assert.deepEqual(prs, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchLinearStatus
+// ---------------------------------------------------------------------------
+
+describe("fetchLinearStatus", () => {
+  it("returns status string for a valid issue", async () => {
+    const mockFetch = async () => ({
+      ok: true,
+      json: async () => ({
+        data: { issues: { nodes: [{ state: { name: "In Progress" } }] } },
+      }),
+    });
+    const status = await fetchLinearStatus("DVA-40", mockFetch);
+    assert.equal(status, "In Progress");
+  });
+
+  it("returns null on API failure", async () => {
+    const mockFetch = async () => ({ ok: false });
+    const status = await fetchLinearStatus("DVA-40", mockFetch);
+    assert.equal(status, null);
+  });
+
+  it("returns null when issue not found", async () => {
+    const mockFetch = async () => ({
+      ok: true,
+      json: async () => ({ data: { issues: { nodes: [] } } }),
+    });
+    const status = await fetchLinearStatus("DVA-999", mockFetch);
+    assert.equal(status, null);
+  });
+
+  it("returns null for unparseable identifier", async () => {
+    const mockFetch = async () => {
+      throw new Error("should not be called");
+    };
+    const status = await fetchLinearStatus("invalid", mockFetch);
+    assert.equal(status, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enrichWithLinearStatus
+// ---------------------------------------------------------------------------
+
+describe("enrichWithLinearStatus", () => {
+  it("adds linearStatus to each agent", async () => {
+    const agents = [
+      { issueId: "DVA-40", issueTitle: "Test", status: "In Progress" },
+      { issueId: "DVA-41", issueTitle: "Other", status: "Queued" },
+    ];
+    const mockFetchStatus = async (id) =>
+      id === "DVA-40" ? "In Progress" : "Todo";
+    const result = await enrichWithLinearStatus(agents, mockFetchStatus);
+    assert.equal(result[0].linearStatus, "In Progress");
+    assert.equal(result[1].linearStatus, "Todo");
+  });
+
+  it("sets linearStatus to null when fetch fails", async () => {
+    const agents = [
+      { issueId: "DVA-40", issueTitle: "Test", status: "In Progress" },
+    ];
+    const mockFetchStatus = async () => null;
+    const result = await enrichWithLinearStatus(agents, mockFetchStatus);
+    assert.equal(result[0].linearStatus, null);
   });
 });
