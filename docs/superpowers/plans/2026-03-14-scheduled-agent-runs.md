@@ -659,7 +659,7 @@ git commit -m "DVA-19: add CLI entry point for agent-scheduler"
 
 - [ ] **Step 1: Write the worker workflow**
 
-This includes the complete failure handler with retry count increment and label application. The handler uses `@linear/sdk` via a helper script (`scripts/linear.mjs`) for status updates and comments, and an inline ESM script for label management.
+This includes the complete failure handler with retry count increment and label application. The handler uses `scripts/linear.mjs` for status revert and `scripts/agent-scheduler.mjs handle-failure` for retry tracking (count increment, label application, and comment posting).
 
 ```yaml
 # .github/workflows/agent-worker.yml
@@ -750,7 +750,9 @@ jobs:
 
           # Read existing retry count, apply label, and post comment
           # Uses agent-scheduler.mjs handle-failure command to reuse tested logic
-          node scripts/agent-scheduler.mjs handle-failure "${{ inputs.issue_id }}" "$HANDOFF_MSG" || echo "Warning: Could not complete failure handling"
+          # Capture stdout to get the retry count for the summary
+          FAILURE_OUTPUT=$(node scripts/agent-scheduler.mjs handle-failure "${{ inputs.issue_id }}" "$HANDOFF_MSG" 2>&1 || echo "Warning: failure handling incomplete")
+          echo "$FAILURE_OUTPUT"
 
           # Write failure summary
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
@@ -760,8 +762,9 @@ jobs:
           |-------|-------|
           | Issue | ${{ inputs.issue_id }}: ${{ inputs.issue_title }} |
           | Linear | https://linear.app/dvaucrosson/issue/${{ inputs.issue_id }} |
-          | Outcome | Failed (attempt ${RETRY_COUNT}) |
+          | Outcome | Failed |
           | Handoff | ${HANDOFF_MSG} |
+          | Details | See Linear comment for retry count |
           EOF
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
