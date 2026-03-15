@@ -28,7 +28,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const { context } = require('@actions/github');
+            // `context` is already provided by actions/github-script@v7
             let shouldRun = false;
             let prNumber = '';
             let triggerType = '';
