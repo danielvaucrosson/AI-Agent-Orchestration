@@ -11,6 +11,7 @@ import {
   updateLinear,
   postRevertLink,
   commentOnOriginalPR,
+  orchestrate,
 } from "../scripts/rollback.mjs";
 
 describe("extractIssueId", () => {
@@ -377,5 +378,156 @@ describe("commentOnOriginalPR", () => {
     }, execMock);
 
     assert.ok(!commands.some((c) => c.includes("gh pr comment")));
+  });
+});
+
+describe("orchestrate", () => {
+  it("exits cleanly when tests pass on first try", () => {
+    const calls = { testRuns: 0, linearCalls: 0 };
+    const deps = {
+      runTests: () => { calls.testRuns++; return { passed: true, flaky: false, outputs: ["all pass"] }; },
+      findGreenSha: () => "prev123",
+      getMerges: () => [],
+      bisect: () => null,
+      createPR: () => ({ prUrl: "" }),
+      linear: () => { calls.linearCalls++; },
+      revertLink: () => {},
+      commentPR: () => {},
+      restoreHead: () => {},
+    };
+
+    const result = orchestrate(deps);
+    assert.equal(result.action, "none");
+    assert.equal(calls.linearCalls, 0);
+  });
+
+  it("exits cleanly with flaky flag when tests are flaky", () => {
+    const deps = {
+      runTests: () => ({ passed: true, flaky: true, outputs: ["fail", "pass"] }),
+      findGreenSha: () => "prev123",
+      getMerges: () => [],
+      bisect: () => null,
+      createPR: () => ({ prUrl: "" }),
+      linear: () => {},
+      revertLink: () => {},
+      commentPR: () => {},
+      restoreHead: () => {},
+    };
+
+    const result = orchestrate(deps);
+    assert.equal(result.action, "flaky");
+  });
+
+  it("creates revert PR and notifies on real failure with single merge", () => {
+    const calls = { linearCalled: false, prCreated: false, commentPosted: false, revertLinked: false };
+    const deps = {
+      runTests: () => ({ passed: false, flaky: false, outputs: ["test_math failed"] }),
+      findGreenSha: () => "prev123",
+      getMerges: () => [{ sha: "bad4567abc1234", message: "Merge PR #5 DVA-5: Add feature" }],
+      bisect: (merges) => merges[0],
+      createPR: () => { calls.prCreated = true; return { prUrl: "https://github.com/owner/repo/pull/99" }; },
+      linear: () => { calls.linearCalled = true; },
+      revertLink: () => { calls.revertLinked = true; },
+      commentPR: () => { calls.commentPosted = true; },
+      restoreHead: () => {},
+    };
+
+    const result = orchestrate(deps);
+    assert.equal(result.action, "reverted");
+    assert.ok(calls.linearCalled);
+    assert.ok(calls.prCreated);
+    assert.ok(calls.commentPosted);
+    assert.ok(calls.revertLinked);
+  });
+
+  it("calls bisect with testFn for multiple merges", () => {
+    let bisectCalled = false;
+    let bisectTestFnReceived = false;
+    const deps = {
+      runTests: () => ({ passed: false, flaky: false, outputs: ["test failed"] }),
+      findGreenSha: () => "prev123",
+      getMerges: () => [
+        { sha: "aaa1234def56780", message: "Merge #1 DVA-1" },
+        { sha: "bbb5678ghi90120", message: "Merge #2 DVA-2" },
+      ],
+      bisect: (merges, testFn) => {
+        bisectCalled = true;
+        bisectTestFnReceived = typeof testFn === "function";
+        return merges[1]; // pretend second merge is culprit
+      },
+      createPR: () => ({ prUrl: "https://github.com/owner/repo/pull/50" }),
+      linear: () => {},
+      revertLink: () => {},
+      commentPR: () => {},
+      restoreHead: () => {},
+    };
+
+    const result = orchestrate(deps);
+    assert.equal(result.action, "reverted");
+    assert.ok(bisectCalled);
+    assert.ok(bisectTestFnReceived);
+  });
+
+  it("calls restoreHead after bisection with multiple merges", () => {
+    let restored = false;
+    const deps = {
+      runTests: () => ({ passed: false, flaky: false, outputs: ["fail"] }),
+      findGreenSha: () => "prev123",
+      getMerges: () => [
+        { sha: "aaa1234def56780", message: "Merge #1" },
+        { sha: "bbb5678ghi90120", message: "Merge #2" },
+      ],
+      bisect: (merges) => merges[0],
+      createPR: () => ({ prUrl: "https://github.com/owner/repo/pull/60" }),
+      linear: () => {},
+      revertLink: () => {},
+      commentPR: () => {},
+      restoreHead: () => { restored = true; },
+    };
+
+    orchestrate(deps);
+    assert.ok(restored);
+  });
+
+  it("skips Linear update when no issue ID in culprit", () => {
+    const calls = { linearCalled: false };
+    const deps = {
+      runTests: () => ({ passed: false, flaky: false, outputs: ["test failed"] }),
+      findGreenSha: () => null,
+      getMerges: () => [{ sha: "xyz7890abc1234", message: "Update deps" }],
+      bisect: (merges) => merges[0],
+      createPR: () => ({ prUrl: "https://github.com/owner/repo/pull/100" }),
+      linear: (id) => { if (id) calls.linearCalled = true; },
+      revertLink: () => {},
+      commentPR: () => {},
+      restoreHead: () => {},
+    };
+
+    const result = orchestrate(deps);
+    assert.equal(result.action, "reverted");
+    assert.equal(calls.linearCalled, false);
+  });
+
+  it("blames most recent merge when no prior green baseline exists", () => {
+    let blamedSha = null;
+    let bisectCalled = false;
+    const deps = {
+      runTests: () => ({ passed: false, flaky: false, outputs: ["fail"] }),
+      findGreenSha: () => null,
+      getMerges: () => [
+        { sha: "old1234def56780", message: "Merge old" },
+        { sha: "new5678ghi90120", message: "Merge new" },
+      ],
+      bisect: () => { bisectCalled = true; return null; },
+      createPR: (culprit) => { blamedSha = culprit.sha; return { prUrl: "https://github.com/owner/repo/pull/70" }; },
+      linear: () => {},
+      revertLink: () => {},
+      commentPR: () => {},
+      restoreHead: () => {},
+    };
+
+    orchestrate(deps);
+    assert.equal(blamedSha, "new5678ghi90120");
+    assert.equal(bisectCalled, false); // no baseline = skip bisect, blame latest
   });
 });

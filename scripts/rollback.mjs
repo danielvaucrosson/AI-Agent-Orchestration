@@ -211,6 +211,135 @@ export function postRevertLink(issueId, prUrl, execFn = null) {
 }
 
 /**
+ * Main orchestration function. Accepts a `deps` object for testability.
+ * In production, `deps` uses the real functions above.
+ * Returns { action: "none"|"flaky"|"reverted", details? }.
+ */
+export function orchestrate(deps) {
+  // Step 1: Run tests with retry
+  const testResult = deps.runTests();
+
+  if (testResult.passed && !testResult.flaky) {
+    console.log("Tests passed on first try. All good.");
+    return { action: "none" };
+  }
+
+  if (testResult.passed && testResult.flaky) {
+    console.log("Tests flaky — passed on retry. No revert needed.");
+    return { action: "flaky" };
+  }
+
+  // Step 2: Find culprit
+  console.log("Tests failed consistently. Identifying culprit...");
+  const greenSha = deps.findGreenSha();
+  const merges = deps.getMerges(greenSha);
+
+  if (merges.length === 0) {
+    console.log("No merge commits found since last green. Cannot identify culprit.");
+    return { action: "none" };
+  }
+
+  // Step 3: Identify culprit — single merge shortcut, no-baseline shortcut, or bisect
+  let culprit;
+  let usedBisection = false;
+
+  if (merges.length === 1) {
+    // Single merge — it's the culprit
+    culprit = merges[0];
+  } else if (!greenSha) {
+    // No prior green baseline — can't bisect reliably, blame latest
+    console.log("No prior green baseline — blaming most recent merge.");
+    culprit = merges[merges.length - 1];
+  } else {
+    usedBisection = true;
+    // Build a testFn that checks out each SHA, installs, and runs tests
+    const testAtSha = (sha) => {
+      try {
+        execSync(`git checkout ${sha} && npm install && npm test`, {
+          encoding: "utf-8", cwd: PROJECT_ROOT, timeout: 300000,
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    culprit = deps.bisect(merges, testAtSha);
+
+    // Restore HEAD and node_modules after bisection
+    deps.restoreHead();
+  }
+
+  if (!culprit) {
+    console.log("Bisection failed to identify a culprit.");
+    return { action: "none" };
+  }
+
+  const issueId = extractIssueId(culprit.message);
+  const isMergeCommit = culprit.message.startsWith("Merge ");
+  const failureOutput = testResult.outputs.join("\n---\n");
+
+  console.log(`Culprit identified: ${culprit.sha.substring(0, 7)} (${issueId || "no issue ID"})`);
+
+  // Step 4: Update Linear FIRST (before pushing revert branch)
+  deps.linear(issueId, {
+    failureOutput,
+    culpritSha: culprit.sha,
+    usedBisection: usedBisection && !culprit.skippedBisection,
+  });
+
+  // Step 5: Create revert PR
+  const { prUrl } = deps.createPR({
+    sha: culprit.sha,
+    message: culprit.message,
+    isMergeCommit,
+    issueId,
+    failureOutput,
+  });
+
+  // Step 6: Post follow-up Linear comment with PR link
+  deps.revertLink(issueId, prUrl);
+
+  // Step 7: Comment on original merged PR
+  deps.commentPR(culprit.sha, {
+    failureOutput,
+    revertPrUrl: prUrl,
+    issueId,
+  });
+
+  console.log(`Revert PR created: ${prUrl}`);
+  return { action: "reverted", prUrl, issueId, culpritSha: culprit.sha };
+}
+
+// --- CLI entry point ---
+
+const isDirectRun = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+
+if (isDirectRun) {
+  const result = orchestrate({
+    runTests: () => runTestsWithRetry(),
+    findGreenSha: () => findLastGreenSha(),
+    getMerges: (baseSha) => getMergeCommitsSince(baseSha),
+    bisect: (merges, testFn) => bisectCulprit(merges, testFn),
+    createPR: (culprit) => createRevertPR(culprit),
+    linear: (issueId, details) => updateLinear(issueId, details),
+    revertLink: (issueId, prUrl) => postRevertLink(issueId, prUrl),
+    commentPR: (sha, details) => commentOnOriginalPR(sha, details),
+    restoreHead: () => {
+      execSync("git checkout main && npm install", {
+        encoding: "utf-8", cwd: PROJECT_ROOT, timeout: 120000,
+      });
+    },
+  });
+
+  if (result.action === "none" || result.action === "flaky") {
+    process.exit(0);
+  }
+  // Revert PR created — exit 1 so the workflow shows as failed
+  process.exit(1);
+}
+
+/**
  * Finds the PR associated with a commit and posts a failure comment.
  * Skips if no PR is found for the commit.
  */
