@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Agent Dashboard Mockups</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d1117; color:#c9d1d9; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; padding:32px; }
+  h1 { color:white; margin-bottom:8px; }
+  .subtitle { color:#8b949e; margin-bottom:32px; }
+  .option { background:#161b22; border:1px solid #30363d; border-radius:12px; padding:24px; margin-bottom:32px; }
+  .option h2 { color:#58a6ff; margin-bottom:8px; }
+  .option > p { color:#8b949e; margin-bottom:16px; }
+  .pros-cons { display:flex; gap:24px; margin-top:16px; padding-top:16px; border-top:1px solid #30363d; }
+  .pros-cons div { flex:1; }
+  .pros-cons h4 { margin-bottom:8px; }
+  .pros h4 { color:#3fb950; }
+  .cons h4 { color:#f85149; }
+  .pros-cons ul { list-style:none; padding:0; }
+  .pros-cons li { padding:2px 0; color:#8b949e; }
+  .pros-cons li::before { margin-right:6px; }
+  .pros li::before { content:"+ "; color:#3fb950; }
+  .cons li::before { content:"- "; color:#f85149; }
+</style>
+</head>
+<body>
+
+<h1>Agent Observability Dashboard — 3 Options</h1>
+<p class="subtitle">Pick the approach that fits how you'd use this day-to-day</p>
+
+<!-- OPTION A: CLI -->
+<div class="option">
+  <h2>Option A: CLI Dashboard</h2>
+  <p><code style="background:#1a1a2e;padding:2px 8px;border-radius:4px;">node scripts/agent-dashboard.mjs</code> — runs in your terminal, live-updating, no browser needed</p>
+
+  <div style="background:#1a1a2e;color:#e0e0e0;font-family:'Cascadia Code','Fira Code',monospace;font-size:13px;padding:20px;border-radius:8px;line-height:1.7;">
+    <div style="color:#4fc3f7;font-weight:bold;margin-bottom:10px;">  AGENT DASHBOARD  ────────────────────────────────────────</div>
+    <div style="margin-bottom:14px;">
+      <span style="color:#81c784;">AGENTS RUNNING:</span> <span style="background:#2e7d32;padding:2px 10px;border-radius:3px;color:white;font-weight:bold;">2 / 4</span>
+      <span style="color:#666;margin-left:16px;">Daily limit: 4 | Used today: 3</span>
+    </div>
+    <div style="border:1px solid #333;border-radius:4px;padding:10px;margin-bottom:8px;">
+      <div><span style="color:#4fc3f7;">DVA-40</span> <span style="color:#aaa;">Filter archived Linear issues during task selection</span></div>
+      <div><span style="background:#1565c0;color:white;padding:1px 8px;border-radius:2px;font-size:11px;">IN PROGRESS</span> <span style="color:#ffd54f;">5m 23s</span> <span style="color:#666;">runner: local-laptop</span></div>
+    </div>
+    <div style="border:1px solid #333;border-radius:4px;padding:10px;margin-bottom:8px;">
+      <div><span style="color:#4fc3f7;">DVA-39</span> <span style="color:#aaa;">Move issues to In Progress on branch creation</span></div>
+      <div><span style="background:#e65100;color:white;padding:1px 8px;border-radius:2px;font-size:11px;">QUEUED</span> <span style="color:#ffd54f;">2m 10s</span> <span style="color:#666;">waiting for runner...</span></div>
+    </div>
+    <div style="margin-top:14px;border-top:1px solid #333;padding-top:10px;">
+      <div style="color:#81c784;margin-bottom:6px;">RECENT COMPLETIONS</div>
+      <div><span style="color:#4caf50;">OK  </span> DVA-38 Upgrade Actions v5 ──────── <span style="color:#58a6ff;">PR #18</span>  <span style="color:#ffd54f;">6m 0s</span></div>
+      <div><span style="color:#f44336;">FAIL</span> DVA-40 Filter archived ─────────── <span style="color:#666;">no PR</span>   <span style="color:#ffd54f;">2m 48s</span></div>
+      <div><span style="color:#4caf50;">OK  </span> DVA-40 Filter archived ─────────── <span style="color:#58a6ff;">PR #17</span>  <span style="color:#ffd54f;">6m 0s</span></div>
+      <div><span style="color:#f44336;">FAIL</span> DVA-40 Filter archived ─────────── <span style="color:#666;">no PR</span>   <span style="color:#ffd54f;">0m 15s</span></div>
+    </div>
+    <div style="margin-top:10px;color:#555;font-size:11px;">Auto-refresh: 10s | q = quit | r = refresh now</div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros"><h4>Pros</h4><ul><li>Zero setup, matches existing scripts</li><li>Works over SSH</li><li>Lightweight, fast</li></ul></div>
+    <div class="cons"><h4>Cons</h4><ul><li>Limited visual richness</li><li>No clickable links</li><li>Hard to share with others</li></ul></div>
+  </div>
+</div>
+
+<!-- OPTION B: WEB -->
+<div class="option">
+  <h2>Option B: Local Web Dashboard</h2>
+  <p><code style="background:#1a1a2e;padding:2px 8px;border-radius:4px;">node scripts/agent-dashboard.mjs --web</code> — GitHub-dark themed browser UI, auto-refreshes every 10s</p>
+
+  <div style="background:#0d1117;border-radius:8px;overflow:hidden;border:1px solid #30363d;">
+    <!-- Header -->
+    <div style="background:#161b22;padding:12px 20px;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;align-items:center;">
+      <div style="font-weight:bold;color:white;font-size:16px;">Agent Control Center</div>
+      <div style="display:flex;gap:16px;align-items:center;">
+        <span style="color:#8b949e;font-size:12px;">Next cron: 12:00 UTC</span>
+        <span style="color:#3fb950;font-size:12px;">&#9679; Auto-refresh: 10s</span>
+      </div>
+    </div>
+    <!-- Gauge row -->
+    <div style="display:flex;gap:16px;padding:16px 20px;">
+      <div style="flex:1;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:36px;font-weight:bold;color:#58a6ff;">2</div>
+        <div style="color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Running</div>
+      </div>
+      <div style="flex:1;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:36px;font-weight:bold;color:#3fb950;">1</div>
+        <div style="color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Succeeded</div>
+      </div>
+      <div style="flex:1;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:36px;font-weight:bold;color:#f85149;">2</div>
+        <div style="color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Failed</div>
+      </div>
+      <div style="flex:1;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;text-align:center;">
+        <div style="font-size:36px;font-weight:bold;color:#d29922;">3/4</div>
+        <div style="color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:1px;">Daily Quota</div>
+      </div>
+    </div>
+    <!-- Active agents -->
+    <div style="padding:0 20px;">
+      <div style="color:#8b949e;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Active Agents</div>
+      <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #58a6ff;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <span style="color:#58a6ff;font-weight:bold;font-size:14px;">DVA-40</span>
+            <span style="color:#c9d1d9;margin-left:10px;">Filter archived Linear issues during task selection</span>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <span style="background:#1f6feb;padding:3px 10px;border-radius:12px;font-size:11px;color:white;">In Progress</span>
+            <span style="color:#ffd54f;font-family:monospace;">5m 23s</span>
+          </div>
+        </div>
+        <div style="color:#8b949e;font-size:12px;margin-top:6px;">
+          Runner: <span style="color:#c9d1d9;">local-laptop</span> &nbsp;|&nbsp;
+          Branch: <span style="color:#c9d1d9;">feature/DVA-40-ignore-archived-issues</span> &nbsp;|&nbsp;
+          Linear: <span style="color:#c9d1d9;">In Progress</span>
+        </div>
+      </div>
+      <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;margin-bottom:10px;border-left:3px solid #d29922;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div>
+            <span style="color:#58a6ff;font-weight:bold;font-size:14px;">DVA-39</span>
+            <span style="color:#c9d1d9;margin-left:10px;">Move issues to In Progress on branch creation</span>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <span style="background:#9e6a03;padding:3px 10px;border-radius:12px;font-size:11px;color:white;">Queued</span>
+            <span style="color:#ffd54f;font-family:monospace;">2m 10s</span>
+          </div>
+        </div>
+        <div style="color:#8b949e;font-size:12px;margin-top:6px;">Waiting for runner...</div>
+      </div>
+    </div>
+    <!-- History -->
+    <div style="padding:16px 20px;">
+      <div style="color:#8b949e;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Recent Runs</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="border-bottom:1px solid #30363d;color:#8b949e;text-align:left;">
+            <th style="padding:8px 0;">Status</th><th>Issue</th><th>Title</th><th>PR</th><th>Duration</th><th>When</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid #21262d;">
+            <td style="padding:8px 0;"><span style="color:#3fb950;font-size:16px;">&#10003;</span> <span style="color:#3fb950;">Success</span></td>
+            <td style="color:#58a6ff;">DVA-38</td>
+            <td>Upgrade Actions v5</td>
+            <td><span style="color:#58a6ff;">#18</span></td>
+            <td style="font-family:monospace;color:#ffd54f;">6m 0s</td>
+            <td style="color:#8b949e;">35 min ago</td>
+          </tr>
+          <tr style="border-bottom:1px solid #21262d;">
+            <td style="padding:8px 0;"><span style="color:#f85149;font-size:16px;">&#10007;</span> <span style="color:#f85149;">Failed</span></td>
+            <td style="color:#58a6ff;">DVA-40</td>
+            <td>Filter archived issues</td>
+            <td style="color:#8b949e;">—</td>
+            <td style="font-family:monospace;color:#ffd54f;">2m 48s</td>
+            <td style="color:#8b949e;">1h ago</td>
+          </tr>
+          <tr style="border-bottom:1px solid #21262d;">
+            <td style="padding:8px 0;"><span style="color:#3fb950;font-size:16px;">&#10003;</span> <span style="color:#3fb950;">Success</span></td>
+            <td style="color:#58a6ff;">DVA-40</td>
+            <td>Filter archived issues</td>
+            <td><span style="color:#58a6ff;">#17</span></td>
+            <td style="font-family:monospace;color:#ffd54f;">6m 0s</td>
+            <td style="color:#8b949e;">1h ago</td>
+          </tr>
+          <tr>
+            <td style="padding:8px 0;"><span style="color:#f85149;font-size:16px;">&#10007;</span> <span style="color:#f85149;">Failed</span></td>
+            <td style="color:#58a6ff;">DVA-40</td>
+            <td>Filter archived (no API key)</td>
+            <td style="color:#8b949e;">—</td>
+            <td style="font-family:monospace;color:#ffd54f;">0m 15s</td>
+            <td style="color:#8b949e;">1.5h ago</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros"><h4>Pros</h4><ul><li>Rich UI with gauges, colors, clickable links</li><li>Easy to glance at in a browser tab</li><li>Could host on GitHub Pages later</li></ul></div>
+    <div class="cons"><h4>Cons</h4><ul><li>Needs a browser tab open</li><li>More code to build and maintain</li></ul></div>
+  </div>
+</div>
+
+<!-- OPTION C: HYBRID -->
+<div class="option">
+  <h2>Option C: Hybrid (CLI + Web)</h2>
+  <p>One script, two interfaces. CLI for quick glances, web for the full picture with history and details.</p>
+
+  <div style="display:flex;gap:16px;">
+    <!-- CLI half -->
+    <div style="flex:1;">
+      <div style="color:#8b949e;font-size:11px;text-transform:uppercase;margin-bottom:6px;">Terminal: <code>node scripts/agent-dashboard.mjs</code></div>
+      <div style="background:#1a1a2e;color:#e0e0e0;font-family:monospace;font-size:11px;padding:14px;border-radius:8px;line-height:1.6;">
+        <div style="color:#4fc3f7;font-weight:bold;margin-bottom:6px;">AGENT STATUS</div>
+        <div><span style="color:#81c784;">RUNNING:</span> <span style="background:#2e7d32;padding:1px 6px;border-radius:3px;color:white;">2</span> / 4 daily</div>
+        <div style="margin-top:6px;">
+          <span style="color:#4caf50;">&#9679;</span> DVA-40 Filter archived <span style="color:#ffd54f;">5m</span>
+        </div>
+        <div>
+          <span style="color:#ff9800;">&#9679;</span> DVA-39 Branch creation <span style="color:#ffd54f;">2m</span>
+        </div>
+        <div style="margin-top:8px;border-top:1px solid #333;padding-top:6px;color:#666;">
+          Last: DVA-38 <span style="color:#4caf50;">OK</span> PR#18 6m
+        </div>
+        <div style="color:#555;font-size:10px;margin-top:6px;">Web: http://localhost:3847</div>
+      </div>
+    </div>
+    <!-- Web half -->
+    <div style="flex:1.5;">
+      <div style="color:#8b949e;font-size:11px;text-transform:uppercase;margin-bottom:6px;">Browser: full details + history</div>
+      <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;overflow:hidden;font-size:11px;">
+        <div style="background:#161b22;padding:8px 14px;border-bottom:1px solid #30363d;color:white;font-weight:bold;font-size:13px;">Agent Control Center</div>
+        <div style="display:flex;gap:8px;padding:10px 14px;">
+          <div style="flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px;text-align:center;">
+            <div style="font-size:20px;font-weight:bold;color:#58a6ff;">2</div>
+            <div style="color:#8b949e;font-size:9px;">RUNNING</div>
+          </div>
+          <div style="flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px;text-align:center;">
+            <div style="font-size:20px;font-weight:bold;color:#3fb950;">1</div>
+            <div style="color:#8b949e;font-size:9px;">OK</div>
+          </div>
+          <div style="flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px;text-align:center;">
+            <div style="font-size:20px;font-weight:bold;color:#f85149;">2</div>
+            <div style="color:#8b949e;font-size:9px;">FAIL</div>
+          </div>
+        </div>
+        <div style="padding:6px 14px 10px;color:#8b949e;font-size:10px;">
+          + Agent cards, run history table, success rate charts...
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros"><h4>Pros</h4><ul><li>Best of both — quick CLI, rich web</li><li>CLI works anywhere, web for deep dives</li><li>Build incrementally: CLI first, web later</li></ul></div>
+    <div class="cons"><h4>Cons</h4><ul><li>More code surface area</li><li>Two interfaces to maintain</li></ul></div>
+  </div>
+</div>
+
+</body>
+</html>
