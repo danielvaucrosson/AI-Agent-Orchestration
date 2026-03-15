@@ -1,5 +1,0 @@
-{
-  "title": "Add historical succeeded/failed totals to dashboard",
-  "body": "## Problem\n\nThe dashboard's Succeeded and Failed gauges only count runs from the last 24 hours. When all past runs are older than 24h, these gauges show `0` even though completed runs exist in the history table.\n\n## Expected Behavior\n\nThe dashboard should show all-time totals for succeeded/failed runs, not just today's counts.\n\n## Fix\n\n- Add `totalSucceeded` and `totalFailed` gauge fields counting all fetched runs\n- CLI: add a `TOTAL:` line showing all-time succeeded/failed counts\n- Web: update gauge cards to show all-time totals with \"X today\" sub-labels\n- Keep existing `succeeded`/`failed` (today-only) fields for backward compatibility\n\nImplemented on branch `claude/fix-metrics-agent-tasks-7PNtu`.",
-  "labels": ["enhancement"]
-}
