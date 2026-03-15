@@ -16,7 +16,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Process issue requests
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -35,6 +45,8 @@ jobs:
               return;
             }
 
+            // --- GitHub issue creation ---
+
             const created = [];
             for (const file of files) {
               const filePath = path.join(dir, file);
@@ -50,16 +62,104 @@ jobs:
                 ...(labels.length > 0 && { labels }),
               });
 
-              console.log(`Created issue #${issue.data.number}: ${issue.data.html_url}`);
-              created.push({ file, number: issue.data.number, url: issue.data.html_url });
+              console.log(`GitHub issue #${issue.data.number}: ${issue.data.html_url}`);
+              created.push({
+                file,
+                number: issue.data.number,
+                url: issue.data.html_url,
+                title: content.title,
+                body: content.body || '',
+                linear: content.linear || {},
+              });
             }
 
-            // Write summary
-            let summary = '### Issues Created\n\n';
-            for (const c of created) {
-              summary += `- **#${c.number}** — [${c.url}](${c.url})\n`;
+            // --- Linear issue creation ---
+
+            const linearApiKey = process.env.LINEAR_API_KEY;
+            const linearResults = [];
+
+            if (linearApiKey) {
+              try {
+                const { LinearClient } = await import('@linear/sdk');
+                const client = new LinearClient({ apiKey: linearApiKey });
+
+                // Cache team lookups
+                const teamCache = new Map();
+
+                for (const item of created) {
+                  try {
+                    const teamKey = item.linear.team || 'DVA';
+                    const status = item.linear.status || 'Backlog';
+                    const linearLabels = item.linear.labels || [];
+
+                    // Get team (cached)
+                    if (!teamCache.has(teamKey)) {
+                      const teams = await client.teams();
+                      const team = teams.nodes.find(t => t.key === teamKey);
+                      if (!team) throw new Error(`Team not found: ${teamKey}`);
+                      teamCache.set(teamKey, team);
+                    }
+                    const team = teamCache.get(teamKey);
+
+                    // Get target state
+                    const states = await team.states();
+                    const state = states.nodes.find(
+                      s => s.name.toLowerCase() === status.toLowerCase()
+                    );
+                    if (!state) throw new Error(`State "${status}" not found`);
+
+                    // Resolve label IDs
+                    let labelIds = [];
+                    if (linearLabels.length > 0) {
+                      const teamLabels = await team.labels();
+                      labelIds = linearLabels
+                        .map(name => teamLabels.nodes.find(l => l.name === name))
+                        .filter(Boolean)
+                        .map(l => l.id);
+                    }
+
+                    // Build body with GitHub issue link
+                    const linkedBody = `${item.body}\n\n---\nGitHub issue: ${item.url}`;
+
+                    // Create issue
+                    const payload = await client.createIssue({
+                      teamId: team.id,
+                      title: item.title,
+                      description: linkedBody,
+                      stateId: state.id,
+                      ...(labelIds.length > 0 && { labelIds }),
+                    });
+                    const linearIssue = await payload.issue;
+
+                    console.log(`Linear issue ${linearIssue.identifier}: ${linearIssue.url}`);
+                    linearResults.push({
+                      file: item.file,
+                      identifier: linearIssue.identifier,
+                      url: linearIssue.url,
+                    });
+                  } catch (err) {
+                    console.error(`Linear creation failed for "${item.title}": ${err.message}`);
+                  }
+                }
+              } catch (err) {
+                console.error(`Linear SDK init failed: ${err.message}`);
+              }
+            } else {
+              console.log('No LINEAR_API_KEY — skipping Linear issue creation');
             }
-            require('fs').appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+
+            // --- Summary ---
+
+            let summary = '### Issues Created\n\n';
+            summary += '| Source | ID | Link |\n|--------|-----|------|\n';
+            for (const c of created) {
+              summary += `| GitHub | #${c.number} | [${c.url}](${c.url}) |\n`;
+              const lr = linearResults.find(l => l.file === c.file);
+              if (lr) {
+                summary += `| Linear | ${lr.identifier} | [${lr.url}](${lr.url}) |\n`;
+              }
+            }
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
 
       - name: Clean up processed requests
         run: |
