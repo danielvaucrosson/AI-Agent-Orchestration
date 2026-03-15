@@ -137,7 +137,8 @@ node scripts/pre-pr-review.mjs --help              # Show usage
 
 | Git Event           | Linear Update                              |
 |---------------------|--------------------------------------------|
-| Push to branch      | Issue → **In Progress** + commit link      |
+| Branch created      | Issue → **In Progress**                    |
+| Push to branch      | Commit link posted                         |
 | PR opened           | Issue → **In Review** + PR attached        |
 | PR merged           | Issue → **Done**                           |
 | PR review + label   | Collects feedback for agent processing     |
