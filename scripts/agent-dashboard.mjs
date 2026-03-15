@@ -35,7 +35,9 @@ function getDailyLimit() {
   }
   return DEFAULT_DAILY_LIMIT;
 }
-const REPO_URL = "https://github.com/danielvaucrosson/Test";
+const REPO_URL = process.env.GITHUB_REPOSITORY
+  ? `https://github.com/${process.env.GITHUB_REPOSITORY}`
+  : "https://github.com/danielvaucrosson/AI-Agent-Orchestration";
 
 // ---------------------------------------------------------------------------
 // ANSI helpers

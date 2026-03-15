@@ -22,7 +22,7 @@ function getRepoUrl() {
   const repo = process.env.GITHUB_REPOSITORY; // "owner/repo"
   return repo
     ? `https://github.com/${repo}`
-    : "https://github.com/danielvaucrosson/Test";
+    : "https://github.com/danielvaucrosson/AI-Agent-Orchestration";
 }
 
 // ---------------------------------------------------------------------------
@@ -357,7 +357,7 @@ const isMain =
 
 if (isMain) {
   const { out } = parseArgs(process.argv.slice(2));
-  const repo = process.env.GITHUB_REPOSITORY || "danielvaucrosson/Test";
+  const repo = process.env.GITHUB_REPOSITORY || "danielvaucrosson/AI-Agent-Orchestration";
   const repoUrl = getRepoUrl();
 
   console.log(`Fetching workflow runs for ${repo}...`);
