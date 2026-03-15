@@ -48,6 +48,23 @@ jobs:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Auto-merge PR
+        if: success() && vars.AGENT_AUTO_MERGE == 'true'
+        run: |
+          # Find the PR created by the agent for this issue
+          PR_URL=$(gh pr list --head "feature/${{ inputs.issue_id }}" --json url --jq '.[0].url' 2>/dev/null || true)
+          if [ -z "$PR_URL" ]; then
+            PR_URL=$(gh pr list --head "fix/${{ inputs.issue_id }}" --json url --jq '.[0].url' 2>/dev/null || true)
+          fi
+          if [ -n "$PR_URL" ]; then
+            echo "Found PR: $PR_URL"
+            gh pr merge "$PR_URL" --squash --delete-branch || echo "Warning: auto-merge failed"
+          else
+            echo "No PR found for ${{ inputs.issue_id }} — skipping auto-merge"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_WITH_WORKFLOW }}
+
       - name: Job summary (success)
         if: success()
         run: |
