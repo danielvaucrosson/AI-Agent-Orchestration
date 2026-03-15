@@ -128,3 +128,56 @@ export function getMergeCommitsSince(baseSha, execFn = null) {
     };
   });
 }
+
+/**
+ * Creates a revert branch, reverts the culprit commit, pushes, and opens a PR.
+ * Returns { prUrl, branchName }.
+ */
+export function createRevertPR(culprit, execFn = null) {
+  const { sha, message, isMergeCommit, issueId, failureOutput } = culprit;
+  const run = execFn || ((cmd) => execSync(cmd, { encoding: "utf-8", cwd: PROJECT_ROOT }).trim());
+
+  // Get the original commit subject for the PR title
+  const commitSubject = run(`git log --format="%s" -1 ${sha}`);
+
+  // Build branch name (lowercase, with short SHA suffix)
+  const shortDesc = (issueId || "unknown").toLowerCase();
+  const branchName = `revert/${shortDesc}-${sha.substring(0, 7)}`;
+
+  // Create revert branch
+  run(`git checkout -b ${branchName}`);
+
+  // Revert the commit (use -m 1 for merge commits)
+  const revertFlag = isMergeCommit ? " -m 1" : "";
+  run(`git revert ${sha}${revertFlag} --no-edit`);
+
+  // Push the branch
+  run(`git push origin ${branchName}`);
+
+  // Build PR title and body
+  const prTitle = issueId
+    ? `Revert ${issueId}: ${commitSubject}`
+    : `Revert: ${commitSubject}`;
+
+  const truncatedOutput = (failureOutput || "").substring(0, 2000);
+  const prBody = [
+    "## Automated Rollback",
+    "",
+    `Tests failed on \`main\` after commit ${sha.substring(0, 7)}.`,
+    "",
+    "### Failure Output",
+    "```",
+    truncatedOutput,
+    "```",
+    "",
+    "**This revert PR requires human approval to merge.**",
+  ].join("\n");
+
+  // Create the PR
+  const prUrl = run(`gh pr create --title "${prTitle}" --body "${prBody.replace(/"/g, '\\"')}" --base main --head ${branchName}`);
+
+  // Return to main
+  run("git checkout main");
+
+  return { prUrl, branchName };
+}

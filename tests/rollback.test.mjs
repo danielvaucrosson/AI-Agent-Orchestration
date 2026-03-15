@@ -7,6 +7,7 @@ import {
   bisectCulprit,
   findLastGreenSha,
   getMergeCommitsSince,
+  createRevertPR,
 } from "../scripts/rollback.mjs";
 
 describe("extractIssueId", () => {
@@ -217,5 +218,75 @@ describe("getMergeCommitsSince", () => {
     const execMock = () => "abc1234 Some merge commit";
     const result = getMergeCommitsSince(null, execMock);
     assert.equal(result.length, 1);
+  });
+});
+
+describe("createRevertPR", () => {
+  it("runs correct git and gh commands for merge commit with issue ID", () => {
+    const commands = [];
+    const execMock = (cmd) => {
+      commands.push(cmd);
+      if (cmd.includes("gh pr create")) return "https://github.com/owner/repo/pull/99";
+      if (cmd.includes("git log")) return "DVA-5: Add readme feature";
+      return "";
+    };
+
+    const result = createRevertPR({
+      sha: "abc1234def5678",
+      message: "Merge pull request #5 from feature/DVA-5-add-readme",
+      isMergeCommit: true,
+      issueId: "DVA-5",
+      failureOutput: "test_math failed: expected 4 got 5",
+    }, execMock);
+
+    assert.ok(commands.some((c) => c.includes("git checkout -b revert/dva-5-")));
+    assert.ok(commands.some((c) => c.includes("git revert abc1234def5678 -m 1 --no-edit")));
+    assert.ok(commands.some((c) => c.includes("git push")));
+    assert.ok(commands.some((c) => c.includes("gh pr create")));
+    assert.equal(result.prUrl, "https://github.com/owner/repo/pull/99");
+  });
+
+  it("omits -m 1 flag for non-merge commits", () => {
+    const commands = [];
+    const execMock = (cmd) => {
+      commands.push(cmd);
+      if (cmd.includes("gh pr create")) return "https://github.com/owner/repo/pull/100";
+      if (cmd.includes("git log")) return "Direct push commit";
+      return "";
+    };
+
+    createRevertPR({
+      sha: "def4567abc1234",
+      message: "Direct push commit",
+      isMergeCommit: false,
+      issueId: null,
+      failureOutput: "test failed",
+    }, execMock);
+
+    const revertCmd = commands.find((c) => c.includes("git revert"));
+    assert.ok(revertCmd);
+    assert.ok(!revertCmd.includes("-m 1"));
+  });
+
+  it("uses commit subject in PR title when no issue ID", () => {
+    const commands = [];
+    const execMock = (cmd) => {
+      commands.push(cmd);
+      if (cmd.includes("gh pr create")) return "https://github.com/owner/repo/pull/101";
+      if (cmd.includes("git log")) return "Some commit without issue";
+      return "";
+    };
+
+    createRevertPR({
+      sha: "ghi7890abc1234",
+      message: "Some commit without issue",
+      isMergeCommit: true,
+      issueId: null,
+      failureOutput: "test failed",
+    }, execMock);
+
+    const prCmd = commands.find((c) => c.includes("gh pr create"));
+    assert.ok(prCmd.includes("Revert:"));
+    assert.ok(!prCmd.includes("DVA-"));
   });
 });
