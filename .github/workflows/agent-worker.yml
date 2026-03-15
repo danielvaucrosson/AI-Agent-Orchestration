@@ -41,7 +41,7 @@ jobs:
         id: agent
         run: |
           echo "start_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          claude -p "Pick up ${{ inputs.issue_id }}: ${{ inputs.issue_title }}. Follow the workflow protocol in CLAUDE.md. This is an automated scheduled run."
+          claude -p "Pick up ${{ inputs.issue_id }}: ${{ inputs.issue_title }}. Follow the workflow protocol in CLAUDE.md. This is an automated scheduled run." --dangerously-skip-permissions
           echo "end_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
