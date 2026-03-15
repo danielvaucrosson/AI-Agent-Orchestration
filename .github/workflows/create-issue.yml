@@ -26,6 +26,7 @@ jobs:
 
       - name: Process issue requests
         env:
+          GH_TOKEN: ${{ github.token }}
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: node scripts/create-issues-from-requests.mjs
 
