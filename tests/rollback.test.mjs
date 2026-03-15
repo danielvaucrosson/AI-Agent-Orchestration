@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   extractIssueId,
   runTestsWithRetry,
+  bisectCulprit,
 } from "../scripts/rollback.mjs";
 
 describe("extractIssueId", () => {
@@ -84,5 +85,77 @@ describe("runTestsWithRetry", () => {
     assert.equal(result.passed, true);
     assert.equal(result.flaky, true);
     assert.equal(result.outputs.length, 3);
+  });
+});
+
+describe("bisectCulprit", () => {
+  it("returns the only merge when list has one entry", () => {
+    const result = bisectCulprit(
+      [{ sha: "aaa", message: "merge A" }],
+      () => true // test function (not called for single entry)
+    );
+    assert.equal(result.sha, "aaa");
+  });
+
+  it("isolates culprit in second half", () => {
+    // Merges: M1(ok), M2(ok), M3(bad), M4(bad)
+    // M3 is the culprit — tests pass at M2, fail at M3
+    const merges = [
+      { sha: "m1", message: "merge 1" },
+      { sha: "m2", message: "merge 2" },
+      { sha: "m3", message: "merge 3" },
+      { sha: "m4", message: "merge 4" },
+    ];
+    const testAtSha = (sha) => sha === "m1" || sha === "m2";
+    const result = bisectCulprit(merges, testAtSha);
+    assert.equal(result.sha, "m3");
+  });
+
+  it("isolates culprit in first half", () => {
+    // M1 is the culprit — tests fail from M1 onward
+    const merges = [
+      { sha: "m1", message: "merge 1" },
+      { sha: "m2", message: "merge 2" },
+      { sha: "m3", message: "merge 3" },
+    ];
+    const testAtSha = () => false; // all fail
+    const result = bisectCulprit(merges, testAtSha);
+    assert.equal(result.sha, "m1");
+  });
+
+  it("handles two merges correctly", () => {
+    const merges = [
+      { sha: "m1", message: "merge 1" },
+      { sha: "m2", message: "merge 2" },
+    ];
+    // Tests pass at m1, fail at m2 => m2 is culprit
+    const testAtSha = (sha) => sha === "m1";
+    const result = bisectCulprit(merges, testAtSha);
+    assert.equal(result.sha, "m2");
+  });
+
+  it("allows bisection for exactly 32 merges (within cap)", () => {
+    const merges = Array.from({ length: 32 }, (_, i) => ({
+      sha: `m${i}`,
+      message: `merge ${i}`,
+    }));
+    // Only m0 passes, so culprit is m1
+    const testAtSha = (sha) => sha === "m0";
+    const result = bisectCulprit(merges, testAtSha, 5);
+    assert.equal(result.sha, "m1");
+    assert.equal(result.skippedBisection, undefined);
+  });
+
+  it("respects safety cap for 33+ merges and returns last merge", () => {
+    const merges = Array.from({ length: 33 }, (_, i) => ({
+      sha: `m${i}`,
+      message: `merge ${i}`,
+    }));
+    let testCallCount = 0;
+    const testAtSha = () => { testCallCount++; return false; };
+    const result = bisectCulprit(merges, testAtSha, 5);
+    assert.equal(result.sha, "m32");
+    assert.equal(result.skippedBisection, true);
+    assert.equal(testCallCount, 0);
   });
 });

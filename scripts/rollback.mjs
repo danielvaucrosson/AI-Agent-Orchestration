@@ -48,3 +48,35 @@ export function runTestsWithRetry(retries = MAX_RETRIES, execFn = null) {
 
   return { passed: false, flaky: false, outputs };
 }
+
+/**
+ * Binary search over merge commits to find the first one that breaks tests.
+ * `merges` is an array of { sha, message } ordered oldest-to-newest.
+ * `testFn(sha)` returns true if tests pass at that SHA, false if they fail.
+ * Returns the culprit merge object, with optional `skippedBisection` flag.
+ */
+export function bisectCulprit(merges, testFn, maxIterations = MAX_BISECT_ITERATIONS) {
+  if (merges.length === 0) return null;
+  if (merges.length === 1) return merges[0];
+
+  // Safety cap: if too many merges, skip bisection (33+ merges for default cap of 5)
+  if (Math.ceil(Math.log2(merges.length)) > maxIterations) {
+    const last = merges[merges.length - 1];
+    return { ...last, skippedBisection: true };
+  }
+
+  let lo = 0;
+  let hi = merges.length - 1;
+
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const passes = testFn(merges[mid].sha);
+    if (passes) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+
+  return merges[lo];
+}
