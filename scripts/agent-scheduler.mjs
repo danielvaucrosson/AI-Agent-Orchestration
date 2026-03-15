@@ -53,6 +53,42 @@ export function parseRetryCount(comments) {
   return maxRetry;
 }
 
-// Temporary stubs — replaced in Task 3
-export function filterForScheduler() { throw new Error("Not implemented"); }
-export function setOutput() { throw new Error("Not implemented"); }
+/**
+ * Filter task list to issues suitable for automated pickup.
+ * - Only "Todo" status (not Backlog — those aren't ready)
+ * - Exclude issues with `agent-failed` label and retry count >= maxRetries
+ *
+ * @param {object[]} tasks - Ordered list of task objects (from task-ordering.mjs)
+ * @param {Object<string, object[]>} commentsMap - Map of identifier -> comments array
+ * @param {number} [maxRetries=2] - Maximum retry attempts before skipping
+ * @returns {object[]} Filtered and ordered tasks
+ */
+export function filterForScheduler(tasks, commentsMap = {}, maxRetries = 2) {
+  return tasks.filter((task) => {
+    if (task.statusLower !== "todo") return false;
+
+    const hasFailedLabel = (task.labels || []).includes("agent-failed");
+    if (hasFailedLabel) {
+      const comments = commentsMap[task.identifier] || [];
+      const retryCount = parseRetryCount(comments);
+      if (retryCount >= maxRetries) return false;
+    }
+
+    return true;
+  });
+}
+
+/**
+ * Write a key=value pair to GitHub Actions output.
+ * Falls back to console.log if not running in Actions.
+ *
+ * @param {string} key - Output variable name
+ * @param {string} value - Output value
+ */
+export function setOutput(key, value) {
+  const outputFile = process.env.GITHUB_OUTPUT;
+  if (outputFile && existsSync(outputFile)) {
+    appendFileSync(outputFile, `${key}=${value}\n`);
+  }
+  console.log(`${key}=${value}`);
+}
