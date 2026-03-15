@@ -19,3 +19,32 @@ export function extractIssueId(text) {
   const match = text.match(ISSUE_RE);
   return match ? match[1] : null;
 }
+
+/**
+ * Runs tests up to `retries` times. Returns { passed, flaky, outputs[] }.
+ * Accepts an optional `execFn` for testing (defaults to execSync with npm test).
+ */
+export function runTestsWithRetry(retries = MAX_RETRIES, execFn = null) {
+  const run = execFn || (() => execSync("npm test 2>&1", {
+    encoding: "utf-8",
+    cwd: PROJECT_ROOT,
+    timeout: 120000,
+  }));
+
+  const outputs = [];
+  for (let i = 0; i < retries; i++) {
+    try {
+      const output = run();
+      outputs.push(output);
+      return {
+        passed: true,
+        flaky: i > 0,
+        outputs,
+      };
+    } catch (err) {
+      outputs.push(err.stdout || err.stderr || err.message || "");
+    }
+  }
+
+  return { passed: false, flaky: false, outputs };
+}

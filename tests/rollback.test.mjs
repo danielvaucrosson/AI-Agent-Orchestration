@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   extractIssueId,
+  runTestsWithRetry,
 } from "../scripts/rollback.mjs";
 
 describe("extractIssueId", () => {
@@ -24,5 +25,64 @@ describe("extractIssueId", () => {
 
   it("handles empty string", () => {
     assert.equal(extractIssueId(""), null);
+  });
+});
+
+describe("runTestsWithRetry", () => {
+  it("returns passed=true on first success", () => {
+    const execMock = () => "pass 5\nfail 0";
+    const result = runTestsWithRetry(3, execMock);
+    assert.equal(result.passed, true);
+    assert.equal(result.flaky, false);
+    assert.equal(result.outputs.length, 1);
+  });
+
+  it("returns flaky=true when second attempt passes", () => {
+    let call = 0;
+    const execMock = () => {
+      call++;
+      if (call === 1) {
+        const err = new Error("test failed");
+        err.stdout = "fail 2\npass 3";
+        err.stderr = "";
+        throw err;
+      }
+      return "pass 5\nfail 0";
+    };
+    const result = runTestsWithRetry(3, execMock);
+    assert.equal(result.passed, true);
+    assert.equal(result.flaky, true);
+    assert.equal(result.outputs.length, 2);
+  });
+
+  it("returns passed=false when all attempts fail", () => {
+    const execMock = () => {
+      const err = new Error("test failed");
+      err.stdout = "fail 5\npass 0";
+      err.stderr = "";
+      throw err;
+    };
+    const result = runTestsWithRetry(3, execMock);
+    assert.equal(result.passed, false);
+    assert.equal(result.flaky, false);
+    assert.equal(result.outputs.length, 3);
+  });
+
+  it("returns flaky=true when third attempt passes", () => {
+    let call = 0;
+    const execMock = () => {
+      call++;
+      if (call <= 2) {
+        const err = new Error("test failed");
+        err.stdout = "fail 1";
+        err.stderr = "";
+        throw err;
+      }
+      return "pass 5\nfail 0";
+    };
+    const result = runTestsWithRetry(3, execMock);
+    assert.equal(result.passed, true);
+    assert.equal(result.flaky, true);
+    assert.equal(result.outputs.length, 3);
   });
 });
