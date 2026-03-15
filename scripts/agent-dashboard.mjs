@@ -213,6 +213,8 @@ export function buildDashboardData(raw) {
   const dailyCount = countDailyRuns(runs);
 
   const runningCount = active.filter((r) => r.status === "in_progress").length;
+  const totalSucceeded = completed.filter((r) => r.conclusion === "success").length;
+  const totalFailed = completed.filter((r) => r.conclusion === "failure").length;
   const succeededToday = completed.filter((r) => {
     const inLast24h =
       Date.now() - new Date(r.created_at).getTime() < 24 * 60 * 60 * 1000;
@@ -260,6 +262,8 @@ export function buildDashboardData(raw) {
       running: runningCount,
       succeeded: succeededToday,
       failed: failedToday,
+      totalSucceeded,
+      totalFailed,
       dailyUsed: dailyCount,
       dailyLimit: getDailyLimit(),
     },
@@ -296,9 +300,14 @@ export function renderDashboard(data, opts = {}) {
     : data.active?.filter((r) => r.status === "in_progress").length ?? 0;
   const dailyLimit = data.gauges?.dailyLimit ?? data.dailyLimit ?? getDailyLimit();
   const dailyCount = data._dailyCount ?? data.dailyCount;
+  const totalSucceeded = data.gauges?.totalSucceeded ?? 0;
+  const totalFailed = data.gauges?.totalFailed ?? 0;
   lines.push(
     `${C.green}RUNNING:${C.reset} ${C.bgGreen}${C.bold} ${runningCount} ${C.reset} / ${dailyLimit} daily` +
       `${C.dim}    Used today: ${dailyCount}${C.reset}`
+  );
+  lines.push(
+    `${C.green}TOTAL:${C.reset}   ${C.green}${totalSucceeded} succeeded${C.reset}  ${C.red}${totalFailed} failed${C.reset}`
   );
   lines.push("");
 
@@ -413,6 +422,7 @@ export function generateDashboardHTML() {
     color: #8b949e; font-size: 11px;
     text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;
   }
+  .gauge-sub { color: #8b949e; font-size: 11px; margin-top: 2px; }
   .gauge-running .gauge-value { color: #58a6ff; }
   .gauge-succeeded .gauge-value { color: #3fb950; }
   .gauge-failed .gauge-value { color: #f85149; }
@@ -502,12 +512,14 @@ function renderGauges(g) {
       <div class="gauge-label">Running</div>
     </div>
     <div class="gauge gauge-succeeded">
-      <div class="gauge-value">\${g.succeeded}</div>
+      <div class="gauge-value">\${g.totalSucceeded}</div>
       <div class="gauge-label">Succeeded</div>
+      <div class="gauge-sub">\${g.succeeded} today</div>
     </div>
     <div class="gauge gauge-failed">
-      <div class="gauge-value">\${g.failed}</div>
+      <div class="gauge-value">\${g.totalFailed}</div>
       <div class="gauge-label">Failed</div>
+      <div class="gauge-sub">\${g.failed} today</div>
     </div>
     <div class="gauge gauge-quota">
       <div class="gauge-value">\${g.dailyUsed}/\${g.dailyLimit}</div>
