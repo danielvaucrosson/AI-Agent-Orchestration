@@ -1,17 +1,16 @@
 /**
- * Agent CLI Dashboard — live-updating terminal display of agent workflow status.
+ * Agent Dashboard — CLI + Web observability for agent workflow runs.
  *
- * Shows running agents, queued jobs, and recent completions by polling
- * the GitHub Actions API for agent-worker.yml workflow runs.
- *
- * Usage: node scripts/agent-dashboard.mjs
- *        node scripts/agent-dashboard.mjs --once   (single render, no refresh)
+ * Usage: node scripts/agent-dashboard.mjs          (CLI live terminal display)
+ *        node scripts/agent-dashboard.mjs --once   (single render, exit)
+ *        node scripts/agent-dashboard.mjs --web    (starts HTTP server + CLI)
  *
  * Requires: GITHUB_TOKEN env var (or gh CLI authentication)
  */
 
+import { createServer } from "node:http";
 import { execSync } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -20,7 +19,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const WORKFLOW_FILE = "agent-worker.yml";
 const REFRESH_INTERVAL_MS = 10_000;
 const MAX_COMPLETIONS = 5;
+const MAX_HISTORY = 20;
 const DAILY_LIMIT = 4;
+const REPO_URL = "https://github.com/danielvaucrosson/Test";
 
 // ---------------------------------------------------------------------------
 // ANSI helpers
@@ -73,8 +74,6 @@ export function categorizeRuns(runs) {
  * @returns {{ issueId: string, issueTitle: string }}
  */
 export function extractRunInfo(run) {
-  // workflow_dispatch inputs are in run.inputs (if available from API)
-  // or sometimes embedded in run.name / run.display_title
   const issueId =
     run.inputs?.issue_id ||
     run.name?.match(/\b([A-Z]{1,5}-\d+)\b/)?.[1] ||
@@ -166,17 +165,109 @@ export function matchRunsToPRs(completedRuns, prs) {
 }
 
 /**
+ * Format a timestamp as relative time (e.g., "5 min ago", "2h ago").
+ *
+ * @param {string} timestamp - ISO 8601 timestamp
+ * @returns {string}
+ */
+export function formatRelativeTime(timestamp) {
+  if (!timestamp) return "";
+  const ms = Date.now() - new Date(timestamp).getTime();
+  if (isNaN(ms) || ms < 0) return "just now";
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+/**
+ * Build structured dashboard data from raw API results.
+ * Used by both CLI renderer and web API endpoint.
+ *
+ * @param {object} raw
+ * @param {object[]} raw.runs - Workflow run objects
+ * @param {object[]} raw.prs - PR objects
+ * @returns {object} Structured dashboard data
+ */
+export function buildDashboardData(raw) {
+  const { runs, prs } = raw;
+  const { active, completed } = categorizeRuns(runs);
+  const prMap = matchRunsToPRs(completed, prs);
+  const dailyCount = countDailyRuns(runs);
+
+  const runningCount = active.filter((r) => r.status === "in_progress").length;
+  const succeededToday = completed.filter((r) => {
+    const inLast24h =
+      Date.now() - new Date(r.created_at).getTime() < 24 * 60 * 60 * 1000;
+    return inLast24h && r.conclusion === "success";
+  }).length;
+  const failedToday = completed.filter((r) => {
+    const inLast24h =
+      Date.now() - new Date(r.created_at).getTime() < 24 * 60 * 60 * 1000;
+    return inLast24h && r.conclusion === "failure";
+  }).length;
+
+  const activeAgents = active.map((run) => {
+    const { issueId, issueTitle } = extractRunInfo(run);
+    return {
+      issueId,
+      issueTitle,
+      status: run.status === "in_progress" ? "In Progress" : "Queued",
+      duration: formatDuration(run.run_started_at || run.created_at),
+      startedAt: run.run_started_at || run.created_at,
+      runner: run.runner_name || "unknown",
+      branch: run.head_branch || "",
+    };
+  });
+
+  const history = completed.slice(0, MAX_HISTORY).map((run) => {
+    const { issueId, issueTitle } = extractRunInfo(run);
+    const prInfo = prMap.get(run.id);
+    return {
+      issueId,
+      issueTitle,
+      success: run.conclusion === "success",
+      prNumber: prInfo?.number || null,
+      prUrl: prInfo ? `${REPO_URL}/pull/${prInfo.number}` : null,
+      duration: formatCompletedDuration(
+        run.run_started_at || run.created_at,
+        run.updated_at
+      ),
+      when: formatRelativeTime(run.updated_at),
+      updatedAt: run.updated_at,
+    };
+  });
+
+  return {
+    gauges: {
+      running: runningCount,
+      succeeded: succeededToday,
+      failed: failedToday,
+      dailyUsed: dailyCount,
+      dailyLimit: DAILY_LIMIT,
+    },
+    activeAgents,
+    history,
+    // Keep raw references for CLI renderer
+    _active: active,
+    _completed: completed,
+    _prMap: prMap,
+    _dailyCount: dailyCount,
+  };
+}
+
+/**
  * Render the CLI dashboard output string from processed data.
  *
- * @param {object} data - Dashboard data
- * @param {object[]} data.active - Active runs
- * @param {object[]} data.completed - Completed runs (latest N)
- * @param {number} data.dailyCount - Runs in last 24h
- * @param {number} data.dailyLimit - Max daily runs
- * @param {Map<number, object>} data.prMap - Run ID -> PR info
+ * @param {object} data - Dashboard data from buildDashboardData
+ * @param {object} [opts] - Options
+ * @param {string} [opts.webUrl] - Web dashboard URL to display
  * @returns {string} ANSI-formatted terminal output
  */
-export function renderDashboard(data) {
+export function renderDashboard(data, opts = {}) {
   const lines = [];
 
   // Header
@@ -186,20 +277,23 @@ export function renderDashboard(data) {
   lines.push("");
 
   // Running gauge
-  const runningCount = data.active.filter(
-    (r) => r.status === "in_progress"
-  ).length;
+  const runningCount = data._active
+    ? data._active.filter((r) => r.status === "in_progress").length
+    : data.active?.filter((r) => r.status === "in_progress").length ?? 0;
+  const dailyLimit = data._dailyCount !== undefined ? DAILY_LIMIT : data.dailyLimit;
+  const dailyCount = data._dailyCount ?? data.dailyCount;
   lines.push(
-    `${C.green}RUNNING:${C.reset} ${C.bgGreen}${C.bold} ${runningCount} ${C.reset} / ${data.dailyLimit} daily` +
-      `${C.dim}    Used today: ${data.dailyCount}${C.reset}`
+    `${C.green}RUNNING:${C.reset} ${C.bgGreen}${C.bold} ${runningCount} ${C.reset} / ${dailyLimit} daily` +
+      `${C.dim}    Used today: ${dailyCount}${C.reset}`
   );
   lines.push("");
 
   // Active agents
-  if (data.active.length === 0) {
+  const activeRuns = data._active || data.active || [];
+  if (activeRuns.length === 0) {
     lines.push(`${C.dim}  No agents currently running${C.reset}`);
   } else {
-    for (const run of data.active) {
+    for (const run of activeRuns) {
       const { issueId, issueTitle } = extractRunInfo(run);
       const isRunning = run.status === "in_progress";
       const dot = isRunning
@@ -219,12 +313,12 @@ export function renderDashboard(data) {
 
   // Recent completions
   lines.push("");
-  lines.push(
-    `${C.dim}${"─".repeat(62)}${C.reset}`
-  );
+  lines.push(`${C.dim}${"─".repeat(62)}${C.reset}`);
   lines.push(`${C.green}RECENT COMPLETIONS${C.reset}`);
 
-  const recent = data.completed.slice(0, MAX_COMPLETIONS);
+  const completedRuns = data._completed || data.completed || [];
+  const prMap = data._prMap || data.prMap || new Map();
+  const recent = completedRuns.slice(0, MAX_COMPLETIONS);
   if (recent.length === 0) {
     lines.push(`${C.dim}  No recent completions${C.reset}`);
   } else {
@@ -234,7 +328,7 @@ export function renderDashboard(data) {
       const statusStr = ok
         ? `${C.green}OK  ${C.reset}`
         : `${C.red}FAIL${C.reset}`;
-      const prInfo = data.prMap.get(run.id);
+      const prInfo = prMap.get(run.id);
       const prStr = prInfo
         ? `${C.cyan}PR #${prInfo.number}${C.reset}`
         : `${C.dim}no PR${C.reset}`;
@@ -254,11 +348,234 @@ export function renderDashboard(data) {
 
   // Footer
   lines.push("");
+  if (opts.webUrl) {
+    lines.push(`${C.dim}Web: ${C.cyan}${opts.webUrl}${C.reset}`);
+  }
   lines.push(
     `${C.dim}Auto-refresh: 10s | q = quit | r = refresh now${C.reset}`
   );
 
   return lines.join("\n");
+}
+
+/**
+ * Generate the self-contained HTML dashboard page.
+ * All CSS is inline — no external dependencies.
+ *
+ * @returns {string} Complete HTML document
+ */
+export function generateDashboardHTML() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Control Center</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d1117; color: #c9d1d9;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+  }
+  header {
+    background: #161b22; padding: 12px 24px;
+    border-bottom: 1px solid #30363d;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  header h1 { font-size: 16px; color: #fff; font-weight: 600; }
+  .header-right { display: flex; gap: 16px; align-items: center; font-size: 12px; color: #8b949e; }
+  .refresh-dot { color: #3fb950; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px 24px; }
+
+  /* Gauge cards */
+  .gauges { display: flex; gap: 16px; margin-bottom: 24px; }
+  .gauge {
+    flex: 1; background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px; padding: 16px; text-align: center;
+  }
+  .gauge-value { font-size: 36px; font-weight: bold; }
+  .gauge-label {
+    color: #8b949e; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;
+  }
+  .gauge-running .gauge-value { color: #58a6ff; }
+  .gauge-succeeded .gauge-value { color: #3fb950; }
+  .gauge-failed .gauge-value { color: #f85149; }
+  .gauge-quota .gauge-value { color: #d29922; }
+
+  /* Section headers */
+  .section-label {
+    color: #8b949e; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 10px;
+  }
+
+  /* Agent cards */
+  .agents { margin-bottom: 24px; }
+  .agent-card {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; padding: 14px; margin-bottom: 10px;
+  }
+  .agent-card.in-progress { border-left: 3px solid #58a6ff; }
+  .agent-card.queued { border-left: 3px solid #d29922; }
+  .agent-top { display: flex; justify-content: space-between; align-items: center; }
+  .agent-issue { color: #58a6ff; font-weight: bold; font-size: 14px; }
+  .agent-title { color: #c9d1d9; margin-left: 10px; }
+  .agent-right { display: flex; gap: 10px; align-items: center; }
+  .pill {
+    padding: 3px 10px; border-radius: 12px;
+    font-size: 11px; color: #fff; font-weight: 500;
+  }
+  .pill-progress { background: #1f6feb; }
+  .pill-queued { background: #9e6a03; }
+  .agent-duration { color: #ffd54f; font-family: 'Cascadia Code', 'Fira Code', monospace; }
+  .agent-meta { color: #8b949e; font-size: 12px; margin-top: 6px; }
+  .agent-meta span { color: #c9d1d9; }
+  .empty-state { color: #8b949e; font-style: italic; padding: 16px 0; }
+
+  /* History table */
+  .history { margin-bottom: 24px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead tr { border-bottom: 1px solid #30363d; color: #8b949e; text-align: left; }
+  th { padding: 8px 12px 8px 0; font-weight: 500; }
+  td { padding: 8px 12px 8px 0; }
+  tbody tr { border-bottom: 1px solid #21262d; }
+  .status-success { color: #3fb950; }
+  .status-failed { color: #f85149; }
+  .issue-link { color: #58a6ff; text-decoration: none; }
+  .issue-link:hover { text-decoration: underline; }
+  .pr-link { color: #58a6ff; text-decoration: none; }
+  .pr-link:hover { text-decoration: underline; }
+  .pr-none { color: #8b949e; }
+  .duration { font-family: 'Cascadia Code', 'Fira Code', monospace; color: #ffd54f; }
+  .when { color: #8b949e; }
+  .check { font-size: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Agent Control Center</h1>
+  <div class="header-right">
+    <span id="last-update"></span>
+    <span><span class="refresh-dot">&#9679;</span> Auto-refresh: 10s</span>
+  </div>
+</header>
+<div class="container">
+  <div class="gauges" id="gauges"></div>
+  <div class="agents">
+    <div class="section-label">Active Agents</div>
+    <div id="agents-list"></div>
+  </div>
+  <div class="history">
+    <div class="section-label">Recent Runs</div>
+    <div id="history-table"></div>
+  </div>
+</div>
+<script>
+const REPO_URL = ${JSON.stringify(REPO_URL)};
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function renderGauges(g) {
+  return \`
+    <div class="gauge gauge-running">
+      <div class="gauge-value">\${g.running}</div>
+      <div class="gauge-label">Running</div>
+    </div>
+    <div class="gauge gauge-succeeded">
+      <div class="gauge-value">\${g.succeeded}</div>
+      <div class="gauge-label">Succeeded</div>
+    </div>
+    <div class="gauge gauge-failed">
+      <div class="gauge-value">\${g.failed}</div>
+      <div class="gauge-label">Failed</div>
+    </div>
+    <div class="gauge gauge-quota">
+      <div class="gauge-value">\${g.dailyUsed}/\${g.dailyLimit}</div>
+      <div class="gauge-label">Daily Quota</div>
+    </div>
+  \`;
+}
+
+function renderAgents(agents) {
+  if (!agents.length) return '<div class="empty-state">No agents currently running</div>';
+  return agents.map(a => {
+    const cls = a.status === 'In Progress' ? 'in-progress' : 'queued';
+    const pillCls = a.status === 'In Progress' ? 'pill-progress' : 'pill-queued';
+    return \`
+      <div class="agent-card \${cls}">
+        <div class="agent-top">
+          <div>
+            <span class="agent-issue">\${escapeHtml(a.issueId)}</span>
+            <span class="agent-title">\${escapeHtml(a.issueTitle)}</span>
+          </div>
+          <div class="agent-right">
+            <span class="pill \${pillCls}">\${escapeHtml(a.status)}</span>
+            <span class="agent-duration">\${escapeHtml(a.duration)}</span>
+          </div>
+        </div>
+        <div class="agent-meta">
+          Runner: <span>\${escapeHtml(a.runner)}</span>
+          &nbsp;|&nbsp; Branch: <span>\${escapeHtml(a.branch)}</span>
+        </div>
+      </div>
+    \`;
+  }).join('');
+}
+
+function renderHistory(history) {
+  if (!history.length) return '<div class="empty-state">No recent runs</div>';
+  const rows = history.map(h => {
+    const statusIcon = h.success
+      ? '<span class="check status-success">&#10003;</span> <span class="status-success">Success</span>'
+      : '<span class="check status-failed">&#10007;</span> <span class="status-failed">Failed</span>';
+    const prCell = h.prNumber
+      ? \`<a class="pr-link" href="\${escapeHtml(h.prUrl)}" target="_blank">#\${h.prNumber}</a>\`
+      : '<span class="pr-none">&mdash;</span>';
+    return \`
+      <tr>
+        <td>\${statusIcon}</td>
+        <td class="issue-link">\${escapeHtml(h.issueId)}</td>
+        <td>\${escapeHtml(h.issueTitle)}</td>
+        <td>\${prCell}</td>
+        <td class="duration">\${escapeHtml(h.duration)}</td>
+        <td class="when">\${escapeHtml(h.when)}</td>
+      </tr>
+    \`;
+  }).join('');
+  return \`
+    <table>
+      <thead><tr><th>Status</th><th>Issue</th><th>Title</th><th>PR</th><th>Duration</th><th>When</th></tr></thead>
+      <tbody>\${rows}</tbody>
+    </table>
+  \`;
+}
+
+async function refresh() {
+  try {
+    const res = await fetch('/api/status');
+    if (!res.ok) throw new Error('API error');
+    const data = await res.json();
+    document.getElementById('gauges').innerHTML = renderGauges(data.gauges);
+    document.getElementById('agents-list').innerHTML = renderAgents(data.activeAgents);
+    document.getElementById('history-table').innerHTML = renderHistory(data.history);
+    document.getElementById('last-update').textContent =
+      'Updated: ' + new Date().toLocaleTimeString();
+  } catch (err) {
+    console.error('Refresh failed:', err);
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,19 +613,42 @@ function fetchRecentPRs() {
   }
 }
 
-async function fetchAndRender() {
-  const runs = fetchWorkflowRuns();
-  const { active, completed } = categorizeRuns(runs);
-  const prs = fetchRecentPRs();
-  const prMap = matchRunsToPRs(completed, prs);
-  const dailyCount = countDailyRuns(runs);
+function fetchRawData() {
+  return {
+    runs: fetchWorkflowRuns(),
+    prs: fetchRecentPRs(),
+  };
+}
 
-  return renderDashboard({
-    active,
-    completed,
-    dailyCount,
-    dailyLimit: DAILY_LIMIT,
-    prMap,
+// ---------------------------------------------------------------------------
+// Web server
+// ---------------------------------------------------------------------------
+
+function startWebServer(port = 0) {
+  const html = generateDashboardHTML();
+
+  const server = createServer((req, res) => {
+    if (req.url === "/api/status") {
+      const raw = fetchRawData();
+      const data = buildDashboardData(raw);
+      // Strip internal fields before sending to client
+      const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+      });
+      res.end(JSON.stringify(publicData));
+    } else {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(html);
+    }
+  });
+
+  return new Promise((resolve) => {
+    server.listen(port, "127.0.0.1", () => {
+      const addr = server.address();
+      resolve({ server, port: addr.port, url: `http://localhost:${addr.port}` });
+    });
   });
 }
 
@@ -322,13 +662,22 @@ const isMain =
 
 if (isMain) {
   const once = process.argv.includes("--once");
+  const web = process.argv.includes("--web");
 
-  // Clear screen helper
+  let webUrl = null;
+  if (web) {
+    const { url } = await startWebServer();
+    webUrl = url;
+    console.log(`Web dashboard: ${webUrl}`);
+  }
+
   const clear = () => process.stdout.write("\x1b[2J\x1b[H");
 
   const refresh = async () => {
     try {
-      const output = await fetchAndRender();
+      const raw = fetchRawData();
+      const data = buildDashboardData(raw);
+      const output = renderDashboard(data, { webUrl });
       clear();
       console.log(output);
     } catch (err) {
@@ -339,10 +688,8 @@ if (isMain) {
   await refresh();
 
   if (!once) {
-    // Set up periodic refresh
     const timer = setInterval(refresh, REFRESH_INTERVAL_MS);
 
-    // Listen for keyboard input
     if (process.stdin.isTTY) {
       process.stdin.setRawMode(true);
       process.stdin.resume();
@@ -350,10 +697,9 @@ if (isMain) {
 
       process.stdin.on("data", async (key) => {
         if (key === "q" || key === "\u0003") {
-          // q or Ctrl+C
           clearInterval(timer);
           process.stdin.setRawMode(false);
-          process.stdout.write("\x1b[?25h"); // show cursor
+          process.stdout.write("\x1b[?25h");
           console.log("\nDashboard closed.");
           process.exit(0);
         }
@@ -362,10 +708,7 @@ if (isMain) {
         }
       });
 
-      // Hide cursor for cleaner display
       process.stdout.write("\x1b[?25l");
-
-      // Restore cursor on exit
       process.on("exit", () => {
         process.stdout.write("\x1b[?25h");
       });
