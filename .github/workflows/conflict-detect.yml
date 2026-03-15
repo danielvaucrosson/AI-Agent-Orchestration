@@ -1,0 +1,52 @@
+name: Conflict Detection
+
+on:
+  push:
+    branches:
+      - 'feature/**'
+      - 'fix/**'
+
+jobs:
+  detect-conflicts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all remote branches
+        run: git fetch --all
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Scan for conflicts
+        id: scan
+        continue-on-error: true
+        run: node scripts/conflict-detect.mjs scan > /tmp/scan-report.txt
+        env:
+          NODE_ENV: production
+
+      - name: Post warnings to Linear
+        if: ${{ vars.LINEAR_ENABLED != 'false' }}
+        run: node scripts/conflict-detect.mjs warn
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+
+      - name: Write summary
+        if: always()
+        run: |
+          echo "## Conflict Detection Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f /tmp/scan-report.txt ]; then
+            cat /tmp/scan-report.txt >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No conflicts detected." >> $GITHUB_STEP_SUMMARY
+          fi
