@@ -129,3 +129,37 @@ export async function enrichWithLinearStatus(
     }))
   );
 }
+
+// ---------------------------------------------------------------------------
+// Data assembler
+// ---------------------------------------------------------------------------
+
+export async function buildStaticData(
+  runs,
+  prs,
+  { repoUrl, fetchStatusFn = fetchLinearStatus } = {}
+) {
+  const raw = { runs, prs };
+  const data = buildDashboardData(raw);
+
+  // Strip internal fields
+  const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+
+  // Override PR URLs with correct repo URL
+  const effectiveRepoUrl = repoUrl || getRepoUrl();
+  for (const entry of publicData.history) {
+    if (entry.prNumber) {
+      entry.prUrl = `${effectiveRepoUrl}/pull/${entry.prNumber}`;
+    }
+  }
+
+  // Enrich active agents with Linear status
+  publicData.activeAgents = await enrichWithLinearStatus(
+    publicData.activeAgents,
+    fetchStatusFn
+  );
+
+  publicData.buildTime = new Date().toISOString();
+
+  return publicData;
+}

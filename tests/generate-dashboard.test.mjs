@@ -7,6 +7,7 @@ import {
   fetchRecentPRs,
   fetchLinearStatus,
   enrichWithLinearStatus,
+  buildStaticData,
 } from "../scripts/generate-dashboard.mjs";
 
 // ---------------------------------------------------------------------------
@@ -140,5 +141,65 @@ describe("enrichWithLinearStatus", () => {
     const mockFetchStatus = async () => null;
     const result = await enrichWithLinearStatus(agents, mockFetchStatus);
     assert.equal(result[0].linearStatus, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildStaticData
+// ---------------------------------------------------------------------------
+
+describe("buildStaticData", () => {
+  const now = new Date().toISOString();
+  const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+
+  it("overrides PR URLs with provided repoUrl", async () => {
+    const runs = [
+      {
+        id: 10,
+        status: "completed",
+        conclusion: "success",
+        created_at: now,
+        run_started_at: fiveMinAgo,
+        updated_at: now,
+        inputs: { issue_id: "DVA-38", issue_title: "Upgrade" },
+      },
+    ];
+    const prs = [
+      { number: 18, title: "DVA-38: Upgrade", headRefName: "feature/DVA-38" },
+    ];
+    const data = await buildStaticData(runs, prs, {
+      repoUrl: "https://github.com/myorg/myrepo",
+      fetchStatusFn: async () => null,
+    });
+    assert.equal(
+      data.history[0].prUrl,
+      "https://github.com/myorg/myrepo/pull/18"
+    );
+  });
+
+  it("enriches active agents with Linear status", async () => {
+    const runs = [
+      {
+        id: 1,
+        status: "in_progress",
+        created_at: now,
+        run_started_at: fiveMinAgo,
+        inputs: { issue_id: "DVA-40", issue_title: "Filter" },
+      },
+    ];
+    const data = await buildStaticData(runs, [], {
+      repoUrl: "https://github.com/test/repo",
+      fetchStatusFn: async () => "In Review",
+    });
+    assert.equal(data.activeAgents[0].linearStatus, "In Review");
+  });
+
+  it("includes buildTime timestamp", async () => {
+    const data = await buildStaticData([], [], {
+      repoUrl: "https://github.com/test/repo",
+      fetchStatusFn: async () => null,
+    });
+    assert.ok(data.buildTime);
+    assert.ok(new Date(data.buildTime).getTime() > 0);
   });
 });
