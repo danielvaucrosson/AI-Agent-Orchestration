@@ -128,6 +128,25 @@ describe("filterForScheduler", () => {
     const result = filterForScheduler(tasks, {});
     assert.equal(result.length, 0);
   });
+
+  it("excludes archived issues even if they are in Todo status", () => {
+    const tasks = [
+      { identifier: "DVA-1", status: "Todo", statusLower: "todo", labels: [], archivedAt: "2026-01-15T00:00:00.000Z" },
+      { identifier: "DVA-2", status: "Todo", statusLower: "todo", labels: [], archivedAt: null },
+    ];
+    const result = filterForScheduler(tasks, {});
+    assert.equal(result.length, 1);
+    assert.equal(result[0].identifier, "DVA-2");
+  });
+
+  it("includes non-archived issues with archivedAt set to null or undefined", () => {
+    const tasks = [
+      { identifier: "DVA-1", status: "Todo", statusLower: "todo", labels: [], archivedAt: null },
+      { identifier: "DVA-2", status: "Todo", statusLower: "todo", labels: [] },
+    ];
+    const result = filterForScheduler(tasks, {});
+    assert.equal(result.length, 2);
+  });
 });
 
 describe("setOutput", () => {

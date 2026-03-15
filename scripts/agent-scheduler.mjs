@@ -65,6 +65,9 @@ export function parseRetryCount(comments) {
  */
 export function filterForScheduler(tasks, commentsMap = {}, maxRetries = 2) {
   return tasks.filter((task) => {
+    // Skip archived issues — they shouldn't be picked up for work
+    if (task.archivedAt) return false;
+
     if (task.statusLower !== "todo") return false;
 
     const hasFailedLabel = (task.labels || []).includes("agent-failed");

@@ -59,6 +59,7 @@ export function normalizeIssue(raw) {
     blockedBy: [],  // filled by buildGraph
     blocks: [],     // filled by buildGraph
     url: raw.url || "",
+    archivedAt: raw.archivedAt || null,
   };
 }
 
@@ -490,6 +491,7 @@ export async function fetchFromLinear(options = {}) {
       priority: { value: priority },
       status: state?.name || "Unknown",
       url: issue.url,
+      archivedAt: issue.archivedAt || null,
     });
 
     // Fetch relations for this issue
