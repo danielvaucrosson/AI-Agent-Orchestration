@@ -1,0 +1,5 @@
+{
+  "title": "Fix dashboard daily quota denominator to use scheduler config",
+  "body": "## Problem\n\nThe agent dashboard (`scripts/agent-dashboard.mjs`) had `DAILY_LIMIT` hardcoded to `4`, but the agent scheduler uses the `AGENT_MAX_DAILY_RUNS` env var with a default of `2`. This caused the daily quota gauge to show `X/4` while the scheduler only allows 2 runs per day.\n\n## Expected Behavior\n\nThe dashboard denominator should match the scheduler's configured max daily runs, updating dynamically when `AGENT_MAX_DAILY_RUNS` is changed.\n\n## Fix\n\n- Replace hardcoded `DAILY_LIMIT = 4` with `getDailyLimit()` that reads `AGENT_MAX_DAILY_RUNS` env var (default 2)\n- Update `renderDashboard` to use data-driven value from gauges\n- Update tests accordingly\n\nImplemented on branch `claude/fix-metrics-agent-tasks-7PNtu`.",
+  "labels": ["bug"]
+}
