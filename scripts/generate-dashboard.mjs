@@ -347,3 +347,36 @@ document.getElementById('build-time').textContent = 'Built: ' + new Date(DASHBOA
 </body>
 </html>`;
 }
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+const isMain =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMain) {
+  const { out } = parseArgs(process.argv.slice(2));
+  const repo = process.env.GITHUB_REPOSITORY || "danielvaucrosson/Test";
+  const repoUrl = getRepoUrl();
+
+  console.log(`Fetching workflow runs for ${repo}...`);
+  const runs = await fetchWorkflowRuns(repo);
+  console.log(`  ${runs.length} runs found`);
+
+  console.log("Fetching recent PRs...");
+  const prs = await fetchRecentPRs(repo);
+  console.log(`  ${prs.length} PRs found`);
+
+  console.log("Building dashboard data (with Linear enrichment)...");
+  const data = await buildStaticData(runs, prs, { repoUrl });
+
+  console.log("Generating static HTML...");
+  const html = generateStaticHTML(data);
+
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, html, "utf8");
+  console.log(
+    `Dashboard written to ${out} (${(html.length / 1024).toFixed(1)} KB)`
+  );
+}
