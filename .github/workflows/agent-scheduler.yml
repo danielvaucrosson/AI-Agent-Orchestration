@@ -1,0 +1,63 @@
+name: Agent Scheduler
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: agent-scheduler
+  cancel-in-progress: true
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  schedule-agent:
+    runs-on: ubuntu-latest
+    # Kill switch: must be explicitly set to "true"
+    if: ${{ vars.AGENT_AUTOPILOT == 'true' }}
+    steps:
+      - name: Kill switch check
+        run: echo "Autopilot enabled — proceeding with task selection"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Select next task
+        id: select
+        run: node scripts/agent-scheduler.mjs next --max-daily ${{ vars.AGENT_MAX_DAILY_RUNS || '2' }} --team DVA
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+
+      - name: Dispatch agent worker
+        if: steps.select.outputs.task != 'none' && steps.select.outputs.task != ''
+        run: |
+          gh workflow run agent-worker.yml \
+            -f issue_id="${{ steps.select.outputs.task }}" \
+            -f issue_title="${{ steps.select.outputs.task_title }}"
+          echo "Dispatched agent-worker for ${{ steps.select.outputs.task }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post Linear notification
+        if: steps.select.outputs.task != 'none' && steps.select.outputs.task != ''
+        run: |
+          node scripts/linear.mjs comment "${{ steps.select.outputs.task }}" \
+            "Automated agent run dispatched via scheduled pickup."
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+
+      - name: No task available
+        if: steps.select.outputs.task == 'none' || steps.select.outputs.task == ''
+        run: echo "No task selected — skipping dispatch"
