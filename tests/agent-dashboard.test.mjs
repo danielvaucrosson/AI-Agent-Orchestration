@@ -232,8 +232,26 @@ describe("buildDashboardData", () => {
     assert.equal(data.gauges.running, 1);
     assert.equal(data.gauges.succeeded, 1);
     assert.equal(data.gauges.failed, 1);
+    assert.equal(data.gauges.totalSucceeded, 1);
+    assert.equal(data.gauges.totalFailed, 1);
     assert.equal(data.gauges.dailyUsed, 3);
-    assert.equal(data.gauges.dailyLimit, 4);
+    assert.equal(data.gauges.dailyLimit, 2);
+  });
+
+  it("counts historical runs older than 24h in totals but not in today", () => {
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    const data = buildDashboardData({
+      runs: [
+        { id: 1, status: "completed", conclusion: "success", created_at: twoDaysAgo, run_started_at: twoDaysAgo, updated_at: twoDaysAgo, inputs: { issue_id: "DVA-10", issue_title: "Old success" } },
+        { id: 2, status: "completed", conclusion: "failure", created_at: twoDaysAgo, run_started_at: twoDaysAgo, updated_at: twoDaysAgo, inputs: { issue_id: "DVA-11", issue_title: "Old failure" } },
+        { id: 3, status: "completed", conclusion: "success", created_at: now, run_started_at: fiveMinAgo, updated_at: now, inputs: { issue_id: "DVA-12", issue_title: "Recent success" } },
+      ],
+      prs: [],
+    });
+    assert.equal(data.gauges.succeeded, 1, "only today's successes");
+    assert.equal(data.gauges.failed, 0, "only today's failures");
+    assert.equal(data.gauges.totalSucceeded, 2, "all-time successes");
+    assert.equal(data.gauges.totalFailed, 1, "all-time failures");
   });
 
   it("builds active agents list", () => {
@@ -269,6 +287,18 @@ describe("buildDashboardData", () => {
     assert.equal(data.history[0].success, true);
     assert.equal(data.history[0].prNumber, 18);
     assert.ok(data.history[0].prUrl.includes("/pull/18"));
+  });
+
+  it("uses AGENT_MAX_DAILY_RUNS env var for dailyLimit", () => {
+    const orig = process.env.AGENT_MAX_DAILY_RUNS;
+    try {
+      process.env.AGENT_MAX_DAILY_RUNS = "6";
+      const data = buildDashboardData({ runs: [], prs: [] });
+      assert.equal(data.gauges.dailyLimit, 6);
+    } finally {
+      if (orig === undefined) delete process.env.AGENT_MAX_DAILY_RUNS;
+      else process.env.AGENT_MAX_DAILY_RUNS = orig;
+    }
   });
 
   it("handles empty input", () => {
