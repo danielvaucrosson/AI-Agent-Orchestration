@@ -1,0 +1,63 @@
+# Builds the static agent dashboard and deploys to GitHub Pages.
+#
+# Prerequisites (one-time manual setup):
+# 1. Repo Settings → Pages → Source → "GitHub Actions"
+# 2. Verify "github-pages" environment exists under Settings → Environments
+
+name: Update Dashboard
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_run:
+    workflows: ["Agent Worker"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  id-token: write
+  actions: read
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate dashboard
+        run: node scripts/generate-dashboard.mjs --out _site/dashboard/index.html
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          AGENT_MAX_DAILY_RUNS: ${{ vars.AGENT_MAX_DAILY_RUNS }}
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
