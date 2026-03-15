@@ -1,0 +1,106 @@
+name: Agent Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_id:
+        description: "Linear issue ID (e.g., DVA-19)"
+        required: true
+        type: string
+      issue_title:
+        description: "Issue title for logs"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: agent-worker-${{ inputs.issue_id }}
+  cancel-in-progress: false
+
+jobs:
+  run-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run agent
+        id: agent
+        run: |
+          echo "start_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          claude -p "Pick up ${{ inputs.issue_id }}: ${{ inputs.issue_title }}. Follow the workflow protocol in CLAUDE.md. This is an automated scheduled run."
+          echo "end_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Job summary (success)
+        if: success()
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Agent Run Complete
+
+          | Field | Value |
+          |-------|-------|
+          | Issue | ${{ inputs.issue_id }}: ${{ inputs.issue_title }} |
+          | Linear | https://linear.app/dvaucrosson/issue/${{ inputs.issue_id }} |
+          | Started | ${{ steps.agent.outputs.start_time }} |
+          | Finished | ${{ steps.agent.outputs.end_time }} |
+          | Outcome | Success |
+          EOF
+
+      - name: Handle failure
+        if: failure()
+        run: |
+          # Check for handoff file
+          HANDOFF_FILE=".claude/handoffs/${{ inputs.issue_id }}.md"
+          HANDOFF_MSG=""
+          if [ -f "$HANDOFF_FILE" ]; then
+            HANDOFF_MSG="Handoff file exists at \`$HANDOFF_FILE\`"
+          else
+            HANDOFF_MSG="No handoff file found"
+          fi
+
+          # Move issue back to Todo
+          node scripts/linear.mjs status "${{ inputs.issue_id }}" "Todo" || echo "Warning: Could not update Linear status"
+
+          # Read existing retry count, apply label, and post comment
+          # Uses agent-scheduler.mjs handle-failure command to reuse tested logic
+          # Capture stdout to get the retry count for the summary
+          FAILURE_OUTPUT=$(node scripts/agent-scheduler.mjs handle-failure "${{ inputs.issue_id }}" "$HANDOFF_MSG" 2>&1 || echo "Warning: failure handling incomplete")
+          echo "$FAILURE_OUTPUT"
+
+          # Write failure summary
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Agent Run Failed
+
+          | Field | Value |
+          |-------|-------|
+          | Issue | ${{ inputs.issue_id }}: ${{ inputs.issue_title }} |
+          | Linear | https://linear.app/dvaucrosson/issue/${{ inputs.issue_id }} |
+          | Outcome | Failed |
+          | Handoff | ${HANDOFF_MSG} |
+          | Details | See Linear comment for retry count |
+          EOF
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
