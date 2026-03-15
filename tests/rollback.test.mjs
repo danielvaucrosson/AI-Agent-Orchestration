@@ -6,6 +6,7 @@ import {
   runTestsWithRetry,
   bisectCulprit,
   findLastGreenSha,
+  getMergeCommitsSince,
 } from "../scripts/rollback.mjs";
 
 describe("extractIssueId", () => {
@@ -191,5 +192,30 @@ describe("findLastGreenSha", () => {
     const execMock = () => "[]";
     const result = findLastGreenSha(execMock);
     assert.equal(result, null);
+  });
+});
+
+describe("getMergeCommitsSince", () => {
+  it("parses git log output into merge objects", () => {
+    const execMock = () => "abc1234 Merge pull request #5 from feature/DVA-5\ndef5678 Merge pull request #6 from fix/DVA-6";
+    const result = getMergeCommitsSince("base123", execMock);
+    assert.equal(result.length, 2);
+    assert.equal(result[0].sha, "abc1234");
+    assert.equal(result[0].message, "Merge pull request #5 from feature/DVA-5");
+    assert.equal(result[1].sha, "def5678");
+  });
+
+  it("returns empty array when no merges found", () => {
+    const execMock = () => "";
+    const result = getMergeCommitsSince("base123", execMock);
+    assert.deepEqual(result, []);
+  });
+
+  it("works when baseSha is null", () => {
+    // Note: the -n 50 limit in the real command is verified by code review,
+    // not by this mock (the mock replaces the entire exec call).
+    const execMock = () => "abc1234 Some merge commit";
+    const result = getMergeCommitsSince(null, execMock);
+    assert.equal(result.length, 1);
   });
 });

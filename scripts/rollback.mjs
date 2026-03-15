@@ -101,3 +101,30 @@ export function findLastGreenSha(execFn = null) {
     return null;
   }
 }
+
+/**
+ * Lists merge commits between baseSha and HEAD.
+ * Returns array of { sha, message } ordered oldest-to-newest.
+ * If baseSha is null, uses HEAD with -n 50 limit.
+ */
+export function getMergeCommitsSince(baseSha, execFn = null) {
+  const range = baseSha ? `${baseSha}..HEAD` : "HEAD";
+  const limit = baseSha ? "" : " -n 50";
+  const cmd = `git log --merges --reverse --format="%H %s"${limit} ${range}`;
+
+  const run = execFn || (() => execSync(cmd, {
+    encoding: "utf-8",
+    cwd: PROJECT_ROOT,
+  }));
+
+  const output = run().trim();
+  if (!output) return [];
+
+  return output.split("\n").map((line) => {
+    const spaceIdx = line.indexOf(" ");
+    return {
+      sha: line.substring(0, spaceIdx),
+      message: line.substring(spaceIdx + 1),
+    };
+  });
+}
