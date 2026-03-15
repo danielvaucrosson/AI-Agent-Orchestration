@@ -75,6 +75,16 @@ describe("normalizeIssue", () => {
     const raw = { id: "a", identifier: "DVA-4", title: "X", priority: { value: 1 } };
     assert.equal(normalizeIssue(raw).prioritySort, 1);
   });
+
+  it("preserves archivedAt when present", () => {
+    const raw = { id: "a", identifier: "DVA-5", title: "Archived", archivedAt: "2026-01-15T00:00:00.000Z" };
+    assert.equal(normalizeIssue(raw).archivedAt, "2026-01-15T00:00:00.000Z");
+  });
+
+  it("defaults archivedAt to null when not set", () => {
+    const raw = { id: "a", identifier: "DVA-6", title: "Active" };
+    assert.equal(normalizeIssue(raw).archivedAt, null);
+  });
 });
 
 describe("buildGraph", () => {
