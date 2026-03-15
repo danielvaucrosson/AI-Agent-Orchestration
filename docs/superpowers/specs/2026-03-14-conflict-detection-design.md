@@ -54,7 +54,7 @@ For `critical` detection: run `git diff --unified=0` on each shared file against
 
 ### Step 5 — Post warnings to Linear
 
-- Extract Linear issue IDs from branch names (reuse `extractIssueId` from `linear-helpers.mjs`)
+- Extract Linear issue IDs from branch names using the regex `/\b([A-Z]{1,5}-\d+)\b/` (same pattern as `.claude/hooks/linear-helpers.mjs`; duplicated inline to avoid cross-layer imports from hooks into scripts)
 - Post a comment to both issues with: severity, overlapping files, branch names, and a coordination suggestion
 - Deduplication via content hash (see below)
 
@@ -82,6 +82,8 @@ node scripts/conflict-detect.mjs warn
 | 1 | Warnings exist |
 | 2 | Critical conflicts found |
 
+Exit codes apply to the `scan` command. The `warn` command always exits 0 (it posts to Linear and logs failures but does not fail the process). The GitHub Action uses `scan` with `continue-on-error: true` so the `warn` step always runs.
+
 ## Output format
 
 Human-readable (default):
@@ -92,6 +94,10 @@ Conflict Detection Report
 Pushed branch: feature/DVA-16-conflict-detection
 Active branches: 3 (2 after staleness filter)
 
+ℹ INFO — feature/DVA-19-scheduled-runs (DVA-19)
+  Same directory:
+    scripts/
+
 ⚠ WARNING — feature/DVA-17-rollback-orchestration (DVA-17)
   Shared files:
     scripts/linear.mjs
@@ -101,8 +107,10 @@ Active branches: 3 (2 after staleness filter)
   Shared files (line overlap):
     scripts/task-ordering.mjs (lines 42-67 vs 50-80)
 
-Summary: 1 warning, 1 critical
+Summary: 1 info, 1 warning, 1 critical
 ```
+
+Info-level conflicts are shown in output but do not affect exit codes.
 
 JSON mode returns an array of conflict objects with `branch`, `issueId`, `severity`, `files`, and `lineRanges` fields.
 
@@ -120,16 +128,16 @@ on:
 ### Steps
 
 1. Checkout with `fetch-depth: 0` (full history for merge-base)
-2. `git fetch --all` (all remote branches)
+2. `git fetch --all` (all remote branches — must run before step 4)
 3. `npm ci`
-4. `node scripts/conflict-detect.mjs scan --json` — capture for action summary
+4. `node scripts/conflict-detect.mjs scan --json` — capture for action summary (`continue-on-error: true`)
 5. `node scripts/conflict-detect.mjs warn` — post to Linear
 6. Write results to `$GITHUB_STEP_SUMMARY`
 
 ### Environment
 
 - `LINEAR_API_KEY` from repository secrets
-- `CONFLICT_DETECT_ENABLED` repository variable (default: `true`) — set to `false` to skip
+- Guarded by `vars.LINEAR_ENABLED != 'false'` (same pattern as `linear-sync.yml` and `pr-feedback.yml`)
 
 ### Non-blocking
 
@@ -139,7 +147,7 @@ Action always exits 0. Conflicts are informational warnings, not gates.
 
 Each warning gets a content hash based on `sorted(overlapping files) + both branch names`. Hash embedded in the Linear comment as `` `conflict-hash: abc123` ``.
 
-Before posting, fetch recent comments on the issue and skip if a comment with the same hash already exists. If the overlap changes (files added or removed), the hash changes and a new warning is posted.
+Before posting to each issue, fetch that issue's recent comments and skip if a comment with the same hash already exists. Each issue is checked independently — if issue A already has the warning but issue B does not, only issue B gets a new comment. If the overlap changes (files added or removed), the hash changes and a new warning is posted.
 
 ## Edge cases
 
@@ -149,20 +157,22 @@ Before posting, fetch recent comments on the issue and skip if a comment with th
 | No Linear issue ID in branch name | Skip Linear posting for that branch, still include in scan output |
 | Pushed branch is `claude/*` | Not triggered (action only fires on `feature/**` and `fix/**`) |
 | Same file, unrelated lines | `warning` severity — file still needs coordination |
-| Merge base can't be determined | Fall back to `origin/main` HEAD |
+| Merge base can't be determined | Skip the branch with a warning logged to action summary (falling back to `origin/main` HEAD would produce false positives from main's own changes) |
 
 ## Dependencies
 
 - `@linear/sdk` (already in `package.json`)
-- `linear-helpers.mjs` for `extractIssueId`
 - Git CLI (available in GitHub Actions runners)
+- Issue ID regex duplicated inline from `.claude/hooks/linear-helpers.mjs` (no cross-layer import)
 
 ## Testing strategy
 
-Unit tests mock git commands and Linear API calls, following the patterns in `tests/scan.test.mjs` and `tests/auto-triage.test.mjs`:
+Core logic is structured as pure functions that accept inputs and return results, following the pattern in `tests/auto-triage.test.mjs` (pure function testing) and `tests/scan.test.mjs` (temp file fixtures). Git and Linear interactions are injected via a `deps` parameter (e.g., `{ runGit, postComment }`) so tests can substitute fake implementations without a mocking library. The project uses `node:test` which has no built-in module mocking.
+
+Test cases:
 
 - Branch discovery with staleness filtering
 - File overlap detection and severity classification
-- Line range overlap calculation
+- Line range overlap calculation (including non-overlapping ranges)
 - Deduplication hash generation and comment skipping
-- Edge cases: no active branches, no overlaps, missing issue IDs, stale branches
+- Edge cases: no active branches, no overlaps, missing issue IDs, stale branches, unreachable merge base
