@@ -30,3 +30,57 @@ export function classifyRun(run, now) {
   }
   return "healthy";
 }
+
+/**
+ * Return a fresh empty pulse-check state object.
+ * @returns {{ runs: Record<string, object>, retryBudget: Record<string, {count: number, day: string}> }}
+ */
+export function emptyState() {
+  return { runs: {}, retryBudget: {} };
+}
+
+/**
+ * Check whether the given issue can be retried today.
+ * Resets the budget when the day rolls over.
+ * @param {string} issueId
+ * @param {object} state - pulse-check state
+ * @param {number} maxRetries - max retries per day (default MAX_PULSE_RETRIES)
+ * @param {string|null} today - ISO date string (YYYY-MM-DD), defaults to today's date
+ * @returns {boolean}
+ */
+export function canRetry(issueId, state, maxRetries = MAX_PULSE_RETRIES, today = null) {
+  const day = today || new Date().toISOString().slice(0, 10);
+  const entry = state.retryBudget[issueId];
+  if (!entry) return true;
+  if (entry.day !== day) return true;
+  return entry.count < maxRetries;
+}
+
+/**
+ * Increment (or create) the retry budget for an issue.
+ * Resets the counter if the day has changed.
+ * @param {string} issueId
+ * @param {object} state - pulse-check state (mutated in place)
+ * @param {string} today - ISO date string (YYYY-MM-DD)
+ */
+export function incrementBudget(issueId, state, today) {
+  const entry = state.retryBudget[issueId];
+  if (!entry || entry.day !== today) {
+    state.retryBudget[issueId] = { count: 1, day: today };
+  } else {
+    entry.count += 1;
+  }
+}
+
+/**
+ * Remove tracked runs that are no longer in the active set.
+ * @param {object} state - pulse-check state (mutated in place)
+ * @param {Set<string>} activeRunIds - IDs of currently active runs
+ */
+export function pruneState(state, activeRunIds) {
+  for (const id of Object.keys(state.runs)) {
+    if (!activeRunIds.has(id)) {
+      delete state.runs[id];
+    }
+  }
+}
