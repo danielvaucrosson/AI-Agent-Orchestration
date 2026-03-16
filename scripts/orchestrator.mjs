@@ -76,8 +76,44 @@ export function buildBranchName(parentIssueId, suffix, index = 0) {
   return `feature/${parentIssueId}${letter}-${sanitized}`;
 }
 
-/** @todo Implemented in Task 3 */
-export async function createSubIssues() { throw new Error('Not yet implemented'); }
+/**
+ * Create Linear sub-issues linked to a parent issue.
+ * @param {string} parentIdentifier - Parent issue identifier (e.g., 'DVA-18')
+ * @param {Array} subtasks - Validated subtask definitions
+ * @param {Object} [deps] - Injected dependencies
+ * @returns {Promise<Array<{id: string, identifier: string, url: string, branchName: string}>>}
+ */
+export async function createSubIssues(parentIdentifier, subtasks, deps = {}) {
+  const client = deps.linearClient || new LinearClient({ apiKey: process.env.LINEAR_API_KEY });
+
+  const parent = await client.issue(parentIdentifier);
+  const teamId = (await parent.team).id;
+
+  const results = [];
+  for (let i = 0; i < subtasks.length; i++) {
+    const sub = subtasks[i];
+    const branchName = buildBranchName(parentIdentifier, sub.branchSuffix, i);
+    const description = `**Parent:** ${parentIdentifier} — ${parent.title}\n**Branch:** \`${branchName}\`\n\n---\n\n${sub.description}`;
+
+    const payload = await client.createIssue({
+      title: sub.title,
+      description,
+      teamId,
+      parentId: parent.id,
+    });
+
+    const created = await payload.issue;
+    results.push({
+      id: created.id,
+      identifier: created.identifier,
+      url: created.url,
+      branchName,
+      title: sub.title,
+    });
+  }
+
+  return results;
+}
 
 /** @todo Implemented in Task 4 */
 export async function createSubBranches() { throw new Error('Not yet implemented'); }

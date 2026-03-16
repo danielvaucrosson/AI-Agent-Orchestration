@@ -115,3 +115,86 @@ describe('buildBranchName', () => {
     assert.equal(buildBranchName('DVA-18', 'my cool task!', 0), 'feature/DVA-18a-my-cool-task-');
   });
 });
+
+describe('createSubIssues', () => {
+  it('creates sub-issues linked to parent via parentId', async () => {
+    const created = [];
+    const mockDeps = {
+      linearClient: {
+        issue: async (id) => ({
+          id: 'uuid-parent',
+          identifier: 'DVA-18',
+          title: 'Parent Issue',
+          team: Promise.resolve({ id: 'team-uuid' }),
+        }),
+        createIssue: async (input) => {
+          created.push(input);
+          return {
+            issue: Promise.resolve({
+              id: `uuid-child-${created.length}`,
+              identifier: `DVA-18-sub${created.length}`,
+              url: `https://linear.app/test/issue/DVA-18-sub${created.length}`,
+            }),
+          };
+        },
+      },
+    };
+
+    const subtasks = [
+      { title: 'Sub A', description: 'Desc A', branchSuffix: 'sub-a' },
+      { title: 'Sub B', description: 'Desc B', branchSuffix: 'sub-b', labels: ['infra'] },
+    ];
+
+    const result = await createSubIssues('DVA-18', subtasks, mockDeps);
+
+    assert.equal(result.length, 2);
+    assert.equal(created[0].parentId, 'uuid-parent');
+    assert.equal(created[0].teamId, 'team-uuid');
+    assert.equal(created[0].title, 'Sub A');
+    assert.ok(created[0].description.includes('Desc A'));
+    assert.equal(created[1].parentId, 'uuid-parent');
+  });
+
+  it('includes parent reference in sub-issue description', async () => {
+    const created = [];
+    const mockDeps = {
+      linearClient: {
+        issue: async () => ({
+          id: 'uuid-p', identifier: 'DVA-18', title: 'Parent', team: Promise.resolve({ id: 't' }),
+        }),
+        createIssue: async (input) => {
+          created.push(input);
+          return { issue: Promise.resolve({ id: 'c1', identifier: 'DVA-X', url: 'url' }) };
+        },
+      },
+    };
+
+    await createSubIssues('DVA-18', [
+      { title: 'A', description: 'Do A', branchSuffix: 'a' },
+      { title: 'B', description: 'Do B', branchSuffix: 'b' },
+    ], mockDeps);
+
+    assert.ok(created[0].description.includes('DVA-18'));
+    assert.ok(created[0].description.includes('Parent'));
+  });
+
+  it('returns created issue metadata', async () => {
+    const mockDeps = {
+      linearClient: {
+        issue: async () => ({ id: 'p', identifier: 'DVA-18', title: 'P', team: Promise.resolve({ id: 't' }) }),
+        createIssue: async () => ({
+          issue: Promise.resolve({ id: 'c1', identifier: 'DVA-99', url: 'https://example.com' }),
+        }),
+      },
+    };
+
+    const result = await createSubIssues('DVA-18', [
+      { title: 'A', description: 'D', branchSuffix: 'a' },
+      { title: 'B', description: 'D', branchSuffix: 'b' },
+    ], mockDeps);
+
+    assert.equal(result[0].identifier, 'DVA-99');
+    assert.equal(result[0].url, 'https://example.com');
+    assert.equal(result[0].branchName, 'feature/DVA-18a-a');
+  });
+});
