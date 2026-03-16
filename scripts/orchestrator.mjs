@@ -62,8 +62,12 @@ export function validateSubtaskDefs(defs) {
   return defs;
 }
 
-// --- Stubs for functions implemented in later tasks ---
-// These will be replaced with full implementations in subsequent tasks.
+/** Validates a git ref name contains only safe characters. */
+function assertSafeRef(name, label) {
+  if (!/^[a-zA-Z0-9_./-]+$/.test(name)) {
+    throw new Error(`Unsafe ${label}: "${name}" — must match [a-zA-Z0-9_./-]`);
+  }
+}
 
 /**
  * Build a branch name for a subtask.
@@ -126,6 +130,7 @@ export async function createSubIssues(parentIdentifier, subtasks, deps = {}) {
  * @returns {string[]} Created branch names
  */
 export function createSubBranches(baseBranch, parentIssueId, subtasks, deps = {}) {
+  assertSafeRef(baseBranch, 'baseBranch');
   const runGit = deps.runGit || defaultRunGit;
   const branches = [];
 
@@ -234,6 +239,8 @@ export function formatProgress(parentId, progress) {
  * @returns {{clean: boolean, conflicts: Array, warnings: Array}}
  */
 export function preflightCheck(branches, baseBranch, deps = {}) {
+  assertSafeRef(baseBranch, 'baseBranch');
+  branches.forEach(b => assertSafeRef(b, 'branch'));
   const runGit = deps.runGit || defaultRunGit;
   const conflicts = [];
   const warnings = [];
@@ -276,6 +283,8 @@ export function preflightCheck(branches, baseBranch, deps = {}) {
  * @returns {{merged: string[], failed: Array}}
  */
 export function mergeBranches(targetBranch, subBranches, deps = {}) {
+  assertSafeRef(targetBranch, 'targetBranch');
+  subBranches.forEach(b => assertSafeRef(b, 'branch'));
   const runGit = deps.runGit || defaultRunGit;
   const merged = [];
   const failed = [];
