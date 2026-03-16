@@ -7,6 +7,8 @@ import {
   canRetry,
   incrementBudget,
   pruneState,
+  extractIssueFromRun,
+  isPulseCheckRun,
 } from "../scripts/pulse-check.mjs";
 
 describe("classifyRun", () => {
@@ -198,5 +200,69 @@ describe("pruneState", () => {
     };
     pruneState(state, new Set());
     assert.deepEqual(state.runs, {});
+  });
+});
+
+describe("extractIssueFromRun", () => {
+  it("extracts issue ID from run.inputs.issue_id", () => {
+    const run = { inputs: { issue_id: "DVA-10" }, name: "agent-worker", display_title: "some title" };
+    assert.equal(extractIssueFromRun(run), "DVA-10");
+  });
+
+  it("skips PULSE-CHECK input and falls back to name", () => {
+    const run = { inputs: { issue_id: "PULSE-CHECK" }, name: "DVA-15 agent run", display_title: "" };
+    assert.equal(extractIssueFromRun(run), "DVA-15");
+  });
+
+  it("extracts issue ID from run.name via regex", () => {
+    const run = { inputs: {}, name: "Agent: DVA-22 fix auth", display_title: "" };
+    assert.equal(extractIssueFromRun(run), "DVA-22");
+  });
+
+  it("extracts issue ID from run.display_title via regex", () => {
+    const run = { inputs: {}, name: "agent-worker", display_title: "DVA-33: Fix bug" };
+    assert.equal(extractIssueFromRun(run), "DVA-33");
+  });
+
+  it("returns unknown when no issue ID found anywhere", () => {
+    const run = { inputs: {}, name: "agent-worker", display_title: "routine maintenance" };
+    assert.equal(extractIssueFromRun(run), "unknown");
+  });
+
+  it("returns unknown when inputs is missing entirely", () => {
+    const run = { name: "worker", display_title: "no issue here" };
+    assert.equal(extractIssueFromRun(run), "unknown");
+  });
+
+  it("handles missing name and display_title gracefully", () => {
+    const run = { inputs: {} };
+    assert.equal(extractIssueFromRun(run), "unknown");
+  });
+});
+
+describe("isPulseCheckRun", () => {
+  it("returns true when inputs.issue_id is PULSE-CHECK", () => {
+    const run = { inputs: { issue_id: "PULSE-CHECK" }, name: "agent-worker" };
+    assert.equal(isPulseCheckRun(run), true);
+  });
+
+  it("returns true when name includes PULSE-CHECK", () => {
+    const run = { inputs: {}, name: "PULSE-CHECK monitor" };
+    assert.equal(isPulseCheckRun(run), true);
+  });
+
+  it("returns true when display_title includes PULSE-CHECK", () => {
+    const run = { inputs: {}, name: "agent-worker", display_title: "PULSE-CHECK scan" };
+    assert.equal(isPulseCheckRun(run), true);
+  });
+
+  it("returns false for a normal run", () => {
+    const run = { inputs: { issue_id: "DVA-10" }, name: "agent-worker", display_title: "DVA-10: Fix" };
+    assert.equal(isPulseCheckRun(run), false);
+  });
+
+  it("returns false when inputs is missing", () => {
+    const run = { name: "agent-worker" };
+    assert.equal(isPulseCheckRun(run), false);
   });
 });

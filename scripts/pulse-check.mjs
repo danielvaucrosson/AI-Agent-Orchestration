@@ -84,3 +84,33 @@ export function pruneState(state, activeRunIds) {
     }
   }
 }
+
+/**
+ * Extract a Linear issue ID from a workflow run object.
+ * Checks inputs.issue_id first (skipping "PULSE-CHECK"), then regex on name/display_title.
+ * @param {object} run - GitHub Actions workflow run object
+ * @returns {string} issue ID (e.g. "DVA-10") or "unknown"
+ */
+export function extractIssueFromRun(run) {
+  const inputId = run.inputs?.issue_id;
+  if (inputId && inputId !== "PULSE-CHECK") {
+    return inputId;
+  }
+  const nameMatch = (run.name || "").match(ISSUE_RE);
+  if (nameMatch) return nameMatch[1];
+  const titleMatch = (run.display_title || "").match(ISSUE_RE);
+  if (titleMatch) return titleMatch[1];
+  return "unknown";
+}
+
+/**
+ * Check whether a workflow run is a pulse-check run (not a real task).
+ * @param {object} run - GitHub Actions workflow run object
+ * @returns {boolean}
+ */
+export function isPulseCheckRun(run) {
+  if (run.inputs?.issue_id === "PULSE-CHECK") return true;
+  if ((run.name || "").includes("PULSE-CHECK")) return true;
+  if ((run.display_title || "").includes("PULSE-CHECK")) return true;
+  return false;
+}
