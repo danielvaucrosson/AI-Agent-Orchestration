@@ -1,6 +1,7 @@
 name: Sync Linear Issues
 
 on:
+  create:
   push:
     branches-ignore:
       - master
@@ -29,16 +30,28 @@ jobs:
         id: extract
         run: node scripts/extract-issue-id.mjs
         env:
-          BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+          BRANCH_NAME: ${{ github.event.ref || github.head_ref || github.ref_name }}
           PR_TITLE: ${{ github.event.pull_request.title || '' }}
           PR_BODY: ${{ github.event.pull_request.body || '' }}
 
-      - name: Update Linear on push (In Progress)
+      - name: Update Linear on branch creation (In Progress)
+        if: >
+          github.event_name == 'create'
+          && github.event.ref_type == 'branch'
+          && steps.extract.outputs.issue_id != ''
+        run: |
+          node scripts/linear.mjs status "$ISSUE_ID" "In Progress"
+          node scripts/linear.mjs comment "$ISSUE_ID" "Branch \`$BRANCH\` created — work started."
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          ISSUE_ID: ${{ steps.extract.outputs.issue_id }}
+          BRANCH: ${{ github.event.ref }}
+
+      - name: Update Linear on push (commit link)
         if: >
           github.event_name == 'push'
           && steps.extract.outputs.issue_id != ''
         run: |
-          node scripts/linear.mjs status "$ISSUE_ID" "In Progress"
           node scripts/linear.mjs comment "$ISSUE_ID" "Branch \`$BRANCH\` pushed — [view commits](https://github.com/${{ github.repository }}/compare/${{ github.event.before }}...${{ github.event.after }})"
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
