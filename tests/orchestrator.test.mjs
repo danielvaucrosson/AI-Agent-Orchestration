@@ -402,3 +402,35 @@ describe('mergeBranches', () => {
     assert.deepEqual(result.merged, ['feature/DVA-18a-api', 'feature/DVA-18b-db']);
   });
 });
+
+describe('buildRecoveryPlan', () => {
+  it('suggests reassignment for failed subtasks', () => {
+    const failed = [
+      { identifier: 'DVA-21', title: 'Build DB schema', stateName: 'Canceled' },
+    ];
+    const plan = buildRecoveryPlan('DVA-18', failed);
+
+    assert.equal(plan.parentId, 'DVA-18');
+    assert.equal(plan.actions.length, 1);
+    assert.equal(plan.actions[0].issueId, 'DVA-21');
+    assert.ok(plan.actions[0].options.includes('reassign'));
+    assert.ok(plan.actions[0].options.includes('self-complete'));
+  });
+
+  it('generates a formatted recovery report', () => {
+    const failed = [
+      { identifier: 'DVA-21', title: 'DB', stateName: 'Canceled' },
+      { identifier: 'DVA-22', title: 'API', stateName: 'Canceled' },
+    ];
+    const plan = buildRecoveryPlan('DVA-18', failed);
+    assert.ok(plan.report.includes('DVA-21'));
+    assert.ok(plan.report.includes('DVA-22'));
+    assert.ok(plan.report.includes('2 failed'));
+  });
+
+  it('returns empty plan when no failures', () => {
+    const plan = buildRecoveryPlan('DVA-18', []);
+    assert.equal(plan.actions.length, 0);
+    assert.ok(plan.report.includes('No failures'));
+  });
+});

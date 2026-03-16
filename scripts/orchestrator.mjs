@@ -295,8 +295,39 @@ export function mergeBranches(targetBranch, subBranches, deps = {}) {
   return { merged, failed };
 }
 
-/** @todo Implemented in Task 7 */
-export function buildRecoveryPlan() { throw new Error('Not yet implemented'); }
+/**
+ * Build a recovery plan for failed subtasks.
+ * @param {string} parentId - Parent issue identifier
+ * @param {Array} failedTasks - Failed subtask objects from findFailed()
+ * @returns {{parentId: string, actions: Array, report: string}}
+ */
+export function buildRecoveryPlan(parentId, failedTasks) {
+  if (failedTasks.length === 0) {
+    return { parentId, actions: [], report: `## ${parentId} Recovery\n\nNo failures detected.` };
+  }
+
+  const actions = failedTasks.map(task => ({
+    issueId: task.identifier,
+    title: task.title,
+    status: task.stateName,
+    options: ['reassign', 'self-complete', 'skip'],
+  }));
+
+  const lines = [
+    `## ${parentId} Recovery — ${failedTasks.length} failed subtask(s)`,
+    '',
+    '| Sub-issue | Title | Status | Options |',
+    '|-----------|-------|--------|---------|',
+  ];
+
+  for (const action of actions) {
+    lines.push(`| ${action.issueId} | ${action.title} | ${action.status} | ${action.options.join(', ')} |`);
+  }
+
+  lines.push('', 'For each failed subtask, the lead agent should:', '1. **Reassign** — move back to Todo for another agent', '2. **Self-complete** — lead agent picks up the work directly', '3. **Skip** — mark as not needed and proceed with merge');
+
+  return { parentId, actions, report: lines.join('\n') };
+}
 
 /** @todo Implemented in Task 8 */
 export function parseCLI() { throw new Error('Not yet implemented'); }
