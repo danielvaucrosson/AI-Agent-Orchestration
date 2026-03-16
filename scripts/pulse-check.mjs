@@ -1,5 +1,6 @@
 // scripts/pulse-check.mjs — Agent health monitoring (pulse check)
 import { execSync } from "node:child_process";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -148,7 +149,7 @@ export async function orchestrate(deps) {
   const {
     fetchRuns, fetchRunners, fetchRunLogs, cancelRun, dispatchRun,
     loadState, saveState, postLinearComment, createGitHubIssue,
-    logAudit, countDailyRuns, now, today,
+    logAudit, logRecoveryEvent, countDailyRuns, now, today,
   } = deps;
 
   const state = await loadState();
@@ -240,6 +241,17 @@ export async function orchestrate(deps) {
       );
       await dispatchRun(issueId, issueTitle);
       await logAudit(`[pulse-check] ${levelMsg}: cancelled ${runId} (${issueId}), diagnosis: ${diagnosis}`);
+      if (logRecoveryEvent) {
+        await logRecoveryEvent({
+          timestamp: new Date(now).toISOString(),
+          level: decision.level,
+          action: "cancel-requeue",
+          issueId,
+          issueTitle,
+          diagnosis,
+          runId,
+        });
+      }
 
       actionsCount++;
       details.push({ runId, issueId, action: "cancel-requeue", level: decision.level, diagnosis });
@@ -295,6 +307,17 @@ export async function orchestrate(deps) {
         );
       }
       await logAudit(`[pulse-check] Level 3 incident: ${issueId} — all agents halted`);
+      if (logRecoveryEvent) {
+        await logRecoveryEvent({
+          timestamp: new Date(now).toISOString(),
+          level: 3,
+          action: "halt-incident",
+          issueId,
+          issueTitle,
+          diagnosis,
+          runId,
+        });
+      }
 
       actionsCount++;
       details.push({ runId, issueId, action: "halt-incident", level: 3, diagnosis });
@@ -470,6 +493,17 @@ async function realCreateGitHubIssue(title, body) {
   );
 }
 
+export const RECOVERY_EVENTS_PATH = join(__dirname, "..", ".claude", "recovery-events.jsonl");
+
+async function realLogRecoveryEvent(event) {
+  try {
+    mkdirSync(dirname(RECOVERY_EVENTS_PATH), { recursive: true });
+    appendFileSync(RECOVERY_EVENTS_PATH, JSON.stringify(event) + "\n");
+  } catch {
+    // Best effort — don't break recovery flow
+  }
+}
+
 async function realLogAudit(message) {
   try {
     execSync(
@@ -516,6 +550,7 @@ if (isMain) {
       postLinearComment: realPostLinearComment,
       createGitHubIssue: realCreateGitHubIssue,
       logAudit: realLogAudit,
+      logRecoveryEvent: realLogRecoveryEvent,
       countDailyRuns: realCountDailyRuns,
       now,
       today,

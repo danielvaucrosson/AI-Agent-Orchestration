@@ -10,7 +10,9 @@
 
 import { createServer } from "node:http";
 import { execSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -199,6 +201,82 @@ export function formatRelativeTime(timestamp) {
   return `${days}d ago`;
 }
 
+// ---------------------------------------------------------------------------
+// Recovery events — read and aggregate
+// ---------------------------------------------------------------------------
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_RECOVERY_EVENTS_PATH = join(__dirname, "..", ".claude", "recovery-events.jsonl");
+
+/**
+ * Recovery level metadata for display.
+ */
+export const RECOVERY_LEVELS = {
+  1: { label: "Level 1", description: "Auto-fix", color: "#d29922", cliColor: "yellow" },
+  2: { label: "Level 2", description: "Kill + Retry", color: "#f0883e", cliColor: "orange" },
+  3: { label: "Level 3", description: "Halt + Incident", color: "#f85149", cliColor: "red" },
+};
+
+/**
+ * Read recovery events from the JSONL file.
+ * Returns an array of event objects. Silently returns [] on errors.
+ *
+ * @param {string} [filePath] - Path to recovery-events.jsonl
+ * @returns {object[]}
+ */
+export function readRecoveryEvents(filePath = DEFAULT_RECOVERY_EVENTS_PATH) {
+  try {
+    const raw = readFileSync(filePath, "utf8").trim();
+    if (!raw) return [];
+    return raw.split("\n").map((line) => {
+      try { return JSON.parse(line); }
+      catch { return null; }
+    }).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Aggregate recovery events into counts by level (today + all-time),
+ * plus detail records grouped by level.
+ *
+ * @param {object[]} events - Array of recovery event objects
+ * @param {string} [today] - ISO date string (YYYY-MM-DD), defaults to today
+ * @returns {{ levels: Record<number, { today: number, allTime: number, events: object[] }>, hasLevel3Today: boolean }}
+ */
+export function aggregateRecoveryLevels(events, today = null) {
+  const day = today || new Date().toISOString().slice(0, 10);
+  const levels = {
+    1: { today: 0, allTime: 0, events: [] },
+    2: { today: 0, allTime: 0, events: [] },
+    3: { today: 0, allTime: 0, events: [] },
+  };
+
+  for (const event of events) {
+    const level = event.level;
+    if (!levels[level]) continue;
+
+    levels[level].allTime++;
+    levels[level].events.push(event);
+
+    const eventDay = (event.timestamp || "").slice(0, 10);
+    if (eventDay === day) {
+      levels[level].today++;
+    }
+  }
+
+  // Sort events newest-first within each level
+  for (const level of Object.values(levels)) {
+    level.events.sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+  }
+
+  return {
+    levels,
+    hasLevel3Today: levels[3].today > 0,
+  };
+}
+
 /**
  * Build structured dashboard data from raw API results.
  * Used by both CLI renderer and web API endpoint.
@@ -206,10 +284,11 @@ export function formatRelativeTime(timestamp) {
  * @param {object} raw
  * @param {object[]} raw.runs - Workflow run objects
  * @param {object[]} raw.prs - PR objects
+ * @param {object[]} [raw.recoveryEvents] - Recovery event objects (optional)
  * @returns {object} Structured dashboard data
  */
 export function buildDashboardData(raw) {
-  const { runs, prs } = raw;
+  const { runs, prs, recoveryEvents } = raw;
   const { active, completed } = categorizeRuns(runs);
   const prMap = matchRunsToPRs(completed, prs);
   const dailyCount = countDailyRuns(runs);
@@ -259,6 +338,8 @@ export function buildDashboardData(raw) {
     };
   });
 
+  const recovery = aggregateRecoveryLevels(recoveryEvents || []);
+
   return {
     gauges: {
       running: runningCount,
@@ -271,6 +352,7 @@ export function buildDashboardData(raw) {
     },
     activeAgents,
     history,
+    recoveryLevels: recovery,
     // Keep raw references for CLI renderer
     _active: active,
     _completed: completed,
@@ -312,6 +394,32 @@ export function renderDashboard(data, opts = {}) {
     `${C.green}TOTAL:${C.reset}   ${C.green}${totalSucceeded} succeeded${C.reset}  ${C.red}${totalFailed} failed${C.reset}`
   );
   lines.push("");
+
+  // Recovery levels
+  const recovery = data.recoveryLevels;
+  if (recovery) {
+    const totalRecovery = recovery.levels[1].allTime + recovery.levels[2].allTime + recovery.levels[3].allTime;
+    if (totalRecovery > 0 || recovery.hasLevel3Today) {
+      lines.push(`${C.dim}${"─".repeat(62)}${C.reset}`);
+      const alertPrefix = recovery.hasLevel3Today
+        ? `${C.bgRed}${C.bold} ⚠ RECOVERY LEVELS ${C.reset}`
+        : `${C.yellow}RECOVERY LEVELS${C.reset}`;
+      lines.push(alertPrefix);
+      lines.push("");
+      for (const lvl of [1, 2, 3]) {
+        const info = RECOVERY_LEVELS[lvl];
+        const counts = recovery.levels[lvl];
+        const colorCode = lvl === 3 ? C.red : lvl === 2 ? C.orange : C.yellow;
+        const todayStr = counts.today > 0 ? `${C.bold}${counts.today}${C.reset}` : `${C.dim}0${C.reset}`;
+        lines.push(
+          `  ${colorCode}${info.label}${C.reset} ${C.dim}(${info.description})${C.reset}` +
+          `${" ".repeat(Math.max(1, 25 - info.label.length - info.description.length))}` +
+          `today: ${todayStr}  ${C.dim}all-time: ${counts.allTime}${C.reset}`
+        );
+      }
+      lines.push("");
+    }
+  }
 
   // Active agents
   const activeRuns = data._active || data.active || [];
@@ -430,6 +538,45 @@ export function generateDashboardHTML() {
   .gauge-failed .gauge-value { color: #f85149; }
   .gauge-quota .gauge-value { color: #d29922; }
 
+  /* Recovery levels panel */
+  .recovery-panel { margin-bottom: 24px; }
+  .recovery-panel.has-alert { }
+  .recovery-alert-banner {
+    background: rgba(248, 81, 73, 0.15); border: 1px solid #f85149;
+    border-radius: 8px; padding: 10px 16px; margin-bottom: 12px;
+    color: #f85149; font-weight: 600; font-size: 13px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .recovery-cards { display: flex; gap: 12px; }
+  .recovery-card {
+    flex: 1; background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px; padding: 16px; text-align: center;
+    cursor: pointer; transition: border-color 0.2s;
+  }
+  .recovery-card:hover { border-color: #58a6ff; }
+  .recovery-card.level-3-active { border-color: #f85149; border-width: 2px; }
+  .recovery-value { font-size: 28px; font-weight: bold; }
+  .recovery-label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+  .recovery-sublabel { color: #8b949e; font-size: 11px; margin-top: 2px; }
+  .recovery-today { color: #8b949e; font-size: 11px; margin-top: 4px; }
+  .recovery-detail {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 14px; margin-top: 10px; display: none;
+  }
+  .recovery-detail.open { display: block; }
+  .recovery-detail-header {
+    font-size: 12px; text-transform: uppercase; color: #8b949e;
+    letter-spacing: 1px; margin-bottom: 8px;
+  }
+  .recovery-event {
+    padding: 6px 0; border-bottom: 1px solid #21262d;
+    font-size: 13px; display: flex; justify-content: space-between;
+  }
+  .recovery-event:last-child { border-bottom: none; }
+  .recovery-event-issue { color: #58a6ff; font-weight: 500; }
+  .recovery-event-time { color: #8b949e; font-size: 12px; }
+  .recovery-event-diagnosis { color: #8b949e; font-size: 11px; }
+
   /* Section headers */
   .section-label {
     color: #8b949e; font-size: 12px;
@@ -489,6 +636,7 @@ export function generateDashboardHTML() {
 </header>
 <div class="container">
   <div class="gauges" id="gauges"></div>
+  <div id="recovery-panel"></div>
   <div class="agents">
     <div class="section-label">Active Agents</div>
     <div id="agents-list"></div>
@@ -584,12 +732,83 @@ function renderHistory(history) {
   \`;
 }
 
+const LEVEL_META = {
+  1: { label: 'Level 1', desc: 'Auto-fix', color: '#d29922' },
+  2: { label: 'Level 2', desc: 'Kill + Retry', color: '#f0883e' },
+  3: { label: 'Level 3', desc: 'Halt + Incident', color: '#f85149' },
+};
+
+function renderRecoveryPanel(recovery) {
+  if (!recovery) return '';
+  const { levels, hasLevel3Today } = recovery;
+  const total = levels[1].allTime + levels[2].allTime + levels[3].allTime;
+  if (total === 0 && !hasLevel3Today) return '';
+
+  const alertBanner = hasLevel3Today
+    ? '<div class="recovery-alert-banner">&#9888; Level 3 incidents detected today — all agents were halted</div>'
+    : '';
+
+  const cards = [1, 2, 3].map(lvl => {
+    const meta = LEVEL_META[lvl];
+    const data = levels[lvl];
+    const activeClass = lvl === 3 && data.today > 0 ? ' level-3-active' : '';
+    return \`
+      <div class="recovery-card\${activeClass}" onclick="toggleRecoveryDetail(\${lvl})" title="Click to see affected tasks">
+        <div class="recovery-value" style="color:\${meta.color}">\${data.allTime}</div>
+        <div class="recovery-label" style="color:\${meta.color}">\${escapeHtml(meta.label)}</div>
+        <div class="recovery-sublabel">\${escapeHtml(meta.desc)}</div>
+        <div class="recovery-today">\${data.today} today</div>
+      </div>
+    \`;
+  }).join('');
+
+  const details = [1, 2, 3].map(lvl => {
+    const meta = LEVEL_META[lvl];
+    const data = levels[lvl];
+    if (data.events.length === 0) {
+      return \`<div class="recovery-detail" id="recovery-detail-\${lvl}">
+        <div class="recovery-detail-header">\${escapeHtml(meta.label)} Events</div>
+        <div style="color:#8b949e;font-size:13px;font-style:italic;">No events recorded</div>
+      </div>\`;
+    }
+    const rows = data.events.slice(0, 10).map(e => \`
+      <div class="recovery-event">
+        <div>
+          <span class="recovery-event-issue">\${escapeHtml(e.issueId || 'unknown')}</span>
+          <span style="margin-left:8px">\${escapeHtml(e.issueTitle || '')}</span>
+          <span class="recovery-event-diagnosis">\${e.diagnosis ? ' — ' + escapeHtml(e.diagnosis) : ''}</span>
+        </div>
+        <div class="recovery-event-time">\${e.timestamp ? new Date(e.timestamp).toLocaleString() : ''}</div>
+      </div>
+    \`).join('');
+    return \`<div class="recovery-detail" id="recovery-detail-\${lvl}">
+      <div class="recovery-detail-header">\${escapeHtml(meta.label)} Events (\${data.events.length} total)</div>
+      \${rows}
+    </div>\`;
+  }).join('');
+
+  return \`
+    <div class="recovery-panel\${hasLevel3Today ? ' has-alert' : ''}">
+      <div class="section-label">Recovery Levels</div>
+      \${alertBanner}
+      <div class="recovery-cards">\${cards}</div>
+      \${details}
+    </div>
+  \`;
+}
+
+function toggleRecoveryDetail(level) {
+  const el = document.getElementById('recovery-detail-' + level);
+  if (el) el.classList.toggle('open');
+}
+
 async function refresh() {
   try {
     const res = await fetch('/api/status');
     if (!res.ok) throw new Error('API error');
     const data = await res.json();
     document.getElementById('gauges').innerHTML = renderGauges(data.gauges);
+    document.getElementById('recovery-panel').innerHTML = renderRecoveryPanel(data.recoveryLevels);
     document.getElementById('agents-list').innerHTML = renderAgents(data.activeAgents);
     document.getElementById('history-table').innerHTML = renderHistory(data.history);
     document.getElementById('last-update').textContent =
@@ -645,6 +864,7 @@ function fetchRawData() {
   return {
     runs: fetchWorkflowRuns(),
     prs: fetchRecentPRs(),
+    recoveryEvents: readRecoveryEvents(),
   };
 }
 
@@ -659,7 +879,7 @@ function startWebServer(port = 0) {
     if (req.url === "/api/status") {
       const raw = fetchRawData();
       const data = buildDashboardData(raw);
-      // Strip internal fields before sending to client
+      // Strip internal fields before sending to client (keep recoveryLevels)
       const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
       res.writeHead(200, {
         "Content-Type": "application/json",
