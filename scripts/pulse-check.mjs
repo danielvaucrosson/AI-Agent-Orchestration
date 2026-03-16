@@ -351,3 +351,176 @@ export function decideAction(diagnosis, runState, budgetCount, isPulseCheck = fa
 
   return { action: "wait" };
 }
+
+// ---------------------------------------------------------------------------
+// Side-effect wrappers (not unit tested — integration only)
+// ---------------------------------------------------------------------------
+
+function ghApi(endpoint) {
+  try {
+    const output = execSync(`gh api "${endpoint}"`, {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return JSON.parse(output);
+  } catch {
+    return null;
+  }
+}
+
+async function realFetchRuns() {
+  const data = ghApi(
+    `/repos/{owner}/{repo}/actions/workflows/${WORKFLOW_FILE}/runs?status=queued&status=in_progress&per_page=30`
+  );
+  return data?.workflow_runs || [];
+}
+
+async function realFetchRunners() {
+  const data = ghApi(`/repos/{owner}/{repo}/actions/runners`);
+  const runners = data?.runners || [];
+  const online = runners.some((r) => r.status === "online");
+  return { online, runners };
+}
+
+async function realFetchRunLogs(runId) {
+  try {
+    const output = execSync(`gh run view ${runId} --log`, {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 30000,
+    });
+    // Take last 100 lines (JS-side truncation, no shell pipe)
+    const lines = output.split("\n").slice(-100).join("\n");
+    const errorPatterns = [/Error:/i, /permission denied/i, /rate limit/i, /FATAL/i, /failed/i];
+    const matches = errorPatterns
+      .filter((p) => p.test(lines))
+      .map((p) => lines.match(new RegExp(`.*${p.source}.*`, "im"))?.[0]?.trim())
+      .filter(Boolean);
+    return matches.length > 0 ? matches.join("\n") : null;
+  } catch {
+    return null;
+  }
+}
+
+async function realCancelRun(runId) {
+  execSync(`gh run cancel ${runId}`, { stdio: "pipe" });
+}
+
+async function realDispatchRun(issueId, issueTitle) {
+  execSync(
+    `gh workflow run ${WORKFLOW_FILE} -f issue_id="${issueId}" -f issue_title="${issueTitle}"`,
+    { stdio: "pipe" }
+  );
+}
+
+async function realLoadState() {
+  try {
+    const output = execSync(
+      `gh api repos/{owner}/{repo}/actions/variables/PULSE_CHECK_STATE --jq '.value'`,
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+    );
+    return JSON.parse(output.trim()) || emptyState();
+  } catch {
+    return emptyState();
+  }
+}
+
+async function realSaveState(state) {
+  const json = JSON.stringify(state);
+  try {
+    execSync(
+      `gh api --method PATCH repos/{owner}/{repo}/actions/variables/PULSE_CHECK_STATE -f name=PULSE_CHECK_STATE -f value='${json.replace(/'/g, "'\\''")}'`,
+      { stdio: "pipe" }
+    );
+  } catch {
+    // Variable might not exist yet — create it
+    execSync(
+      `gh api --method POST repos/{owner}/{repo}/actions/variables -f name=PULSE_CHECK_STATE -f value='${json.replace(/'/g, "'\\''")}'`,
+      { stdio: "pipe" }
+    );
+  }
+}
+
+async function realPostLinearComment(issueId, message) {
+  if (issueId === "unknown" || issueId === "PULSE-CHECK") return;
+  try {
+    execSync(
+      `node ${join(__dirname, "linear.mjs")} comment "${issueId}" "${message.replace(/"/g, '\\"')}"`,
+      { stdio: "pipe", env: { ...process.env } }
+    );
+  } catch {
+    // Best effort
+  }
+}
+
+async function realCreateGitHubIssue(title, body) {
+  execSync(
+    `gh issue create --title "${title.replace(/"/g, '\\"')}" --body "${body.replace(/"/g, '\\"')}" --label incident`,
+    { stdio: "pipe" }
+  );
+}
+
+async function realLogAudit(message) {
+  try {
+    execSync(
+      `node ${join(__dirname, "audit.mjs")} log pulse-check "${message.replace(/"/g, '\\"')}"`,
+      { stdio: "pipe" }
+    );
+  } catch {
+    console.log(message);
+  }
+}
+
+async function realCountDailyRuns() {
+  const data = ghApi(
+    `/repos/{owner}/{repo}/actions/workflows/${WORKFLOW_FILE}/runs?per_page=30`
+  );
+  const runs = data?.workflow_runs || [];
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  return runs.filter((r) => new Date(r.created_at).getTime() > cutoff).length;
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+const isMain =
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMain) {
+  const command = process.argv[2];
+
+  if (command === "check") {
+    const now = Date.now();
+    const today = new Date(now).toISOString().slice(0, 10);
+
+    const result = await orchestrate({
+      fetchRuns: realFetchRuns,
+      fetchRunners: realFetchRunners,
+      fetchRunLogs: realFetchRunLogs,
+      cancelRun: realCancelRun,
+      dispatchRun: realDispatchRun,
+      loadState: realLoadState,
+      saveState: realSaveState,
+      postLinearComment: realPostLinearComment,
+      createGitHubIssue: realCreateGitHubIssue,
+      logAudit: realLogAudit,
+      countDailyRuns: realCountDailyRuns,
+      now,
+      today,
+    });
+
+    console.log(`Pulse check complete: ${result.actionsCount} action(s) taken`);
+    if (result.details.length > 0) {
+      for (const d of result.details) {
+        console.log(`  ${d.issueId}: ${d.action} (${d.diagnosis})`);
+      }
+    }
+  } else {
+    console.log("Usage: node scripts/pulse-check.mjs check");
+    console.log("");
+    console.log("Commands:");
+    console.log("  check    Run pulse check on active agent workflows");
+  }
+}
