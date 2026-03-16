@@ -266,3 +266,87 @@ describe('discoverSubBranches', () => {
     assert.equal(result[0], 'feature/DVA-18a-api');
   });
 });
+
+describe('checkProgress', () => {
+  it('fetches sub-issue statuses for a parent issue', async () => {
+    const mockDeps = {
+      linearClient: {
+        issue: async (id) => ({
+          id: 'uuid-parent',
+          identifier: 'DVA-18',
+          children: async () => ({
+            nodes: [
+              { id: 'c1', identifier: 'DVA-20', title: 'Sub A', state: { name: 'Done', type: 'completed' } },
+              { id: 'c2', identifier: 'DVA-21', title: 'Sub B', state: { name: 'In Progress', type: 'started' } },
+              { id: 'c3', identifier: 'DVA-22', title: 'Sub C', state: { name: 'Todo', type: 'unstarted' } },
+            ],
+          }),
+        }),
+      },
+    };
+
+    const progress = await checkProgress('DVA-18', mockDeps);
+    assert.equal(progress.total, 3);
+    assert.equal(progress.completed, 1);
+    assert.equal(progress.inProgress, 1);
+    assert.equal(progress.todo, 1);
+    assert.equal(progress.failed, 0);
+    assert.equal(progress.subtasks.length, 3);
+  });
+});
+
+describe('isAllComplete', () => {
+  it('returns true when all subtasks are completed', () => {
+    assert.equal(isAllComplete({ total: 3, completed: 3 }), true);
+  });
+
+  it('returns false when some subtasks remain', () => {
+    assert.equal(isAllComplete({ total: 3, completed: 2 }), false);
+  });
+});
+
+describe('findFailed', () => {
+  it('returns subtasks with canceled status', () => {
+    const progress = {
+      subtasks: [
+        { identifier: 'DVA-20', title: 'A', stateType: 'completed' },
+        { identifier: 'DVA-21', title: 'B', stateType: 'canceled' },
+      ],
+    };
+    const failed = findFailed(progress);
+    assert.equal(failed.length, 1);
+    assert.equal(failed[0].identifier, 'DVA-21');
+  });
+
+  it('returns empty array when nothing failed', () => {
+    const progress = {
+      subtasks: [
+        { identifier: 'DVA-20', stateType: 'completed' },
+        { identifier: 'DVA-21', stateType: 'started' },
+      ],
+    };
+    assert.equal(findFailed(progress).length, 0);
+  });
+});
+
+describe('formatProgress', () => {
+  it('formats a readable progress report', () => {
+    const progress = {
+      total: 3,
+      completed: 1,
+      inProgress: 1,
+      todo: 1,
+      failed: 0,
+      subtasks: [
+        { identifier: 'DVA-20', title: 'Sub A', stateName: 'Done', stateType: 'completed' },
+        { identifier: 'DVA-21', title: 'Sub B', stateName: 'In Progress', stateType: 'started' },
+        { identifier: 'DVA-22', title: 'Sub C', stateName: 'Todo', stateType: 'unstarted' },
+      ],
+    };
+    const report = formatProgress('DVA-18', progress);
+    assert.ok(report.includes('DVA-18'));
+    assert.ok(report.includes('1/3'));
+    assert.ok(report.includes('DVA-20'));
+    assert.ok(report.includes('Done'));
+  });
+});

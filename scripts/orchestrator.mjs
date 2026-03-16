@@ -158,17 +158,73 @@ export function discoverSubBranches(parentIssueId, deps = {}) {
     .filter((name, i, arr) => arr.indexOf(name) === i); // dedupe
 }
 
-/** @todo Implemented in Task 5 */
-export async function checkProgress() { throw new Error('Not yet implemented'); }
+/**
+ * Check progress of all sub-issues for a parent.
+ * @param {string} parentIdentifier - Parent issue identifier
+ * @param {Object} [deps] - Injected dependencies
+ * @returns {Promise<{total, completed, inProgress, todo, failed, subtasks}>}
+ */
+export async function checkProgress(parentIdentifier, deps = {}) {
+  const client = deps.linearClient || new LinearClient({ apiKey: process.env.LINEAR_API_KEY });
+  const parent = await client.issue(parentIdentifier);
+  const children = await parent.children();
 
-/** @todo Implemented in Task 5 */
-export function isAllComplete() { throw new Error('Not yet implemented'); }
+  const subtasks = children.nodes.map(child => ({
+    id: child.id,
+    identifier: child.identifier,
+    title: child.title,
+    stateName: child.state.name,
+    stateType: child.state.type,
+  }));
 
-/** @todo Implemented in Task 5 */
-export function findFailed() { throw new Error('Not yet implemented'); }
+  return {
+    total: subtasks.length,
+    completed: subtasks.filter(s => s.stateType === 'completed').length,
+    inProgress: subtasks.filter(s => s.stateType === 'started').length,
+    todo: subtasks.filter(s => s.stateType === 'unstarted' || s.stateType === 'backlog').length,
+    failed: subtasks.filter(s => s.stateType === 'canceled').length,
+    subtasks,
+  };
+}
 
-/** @todo Implemented in Task 5 */
-export function formatProgress() { throw new Error('Not yet implemented'); }
+/**
+ * Check if all subtasks are complete.
+ */
+export function isAllComplete(progress) {
+  return progress.completed === progress.total;
+}
+
+/**
+ * Find subtasks that have failed (canceled).
+ */
+export function findFailed(progress) {
+  return progress.subtasks.filter(s => s.stateType === 'canceled');
+}
+
+/**
+ * Format progress as a readable report.
+ */
+export function formatProgress(parentId, progress) {
+  const lines = [
+    `## ${parentId} — Progress: ${progress.completed}/${progress.total}`,
+    '',
+    '| Sub-issue | Title | Status |',
+    '|-----------|-------|--------|',
+  ];
+
+  for (const sub of progress.subtasks) {
+    const icon = sub.stateType === 'completed' ? '✅' :
+                 sub.stateType === 'started' ? '🔄' :
+                 sub.stateType === 'canceled' ? '❌' : '⬜';
+    lines.push(`| ${sub.identifier} | ${sub.title} | ${icon} ${sub.stateName} |`);
+  }
+
+  if (progress.failed > 0) {
+    lines.push('', `⚠️ ${progress.failed} subtask(s) failed — run \`orchestrator.mjs recover ${parentId}\` to handle.`);
+  }
+
+  return lines.join('\n');
+}
 
 /** @todo Implemented in Task 6 */
 export async function preflightCheck() { throw new Error('Not yet implemented'); }
