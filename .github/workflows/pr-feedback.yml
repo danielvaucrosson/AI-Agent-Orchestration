@@ -25,10 +25,10 @@ jobs:
     steps:
       - name: Check trigger conditions
         id: guard
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
-            // `context` is already provided by actions/github-script@v7
+            // `context` is already provided by actions/github-script
             let shouldRun = false;
             let prNumber = '';
             let triggerType = '';
