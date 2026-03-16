@@ -466,11 +466,15 @@ async function realSaveState(state) {
       { stdio: "pipe" }
     );
   } catch {
-    // Variable might not exist yet — create it
-    execSync(
-      `gh api --method POST repos/{owner}/{repo}/actions/variables -f name=PULSE_CHECK_STATE -f value='${json.replace(/'/g, "'\\''")}'`,
-      { stdio: "pipe" }
-    );
+    // Variable might not exist yet — try creating it
+    try {
+      execSync(
+        `gh api --method POST repos/{owner}/{repo}/actions/variables -f name=PULSE_CHECK_STATE -f value='${json.replace(/'/g, "'\\''")}'`,
+        { stdio: "pipe" }
+      );
+    } catch (err) {
+      console.warn("⚠️ Could not persist pulse check state — token may lack Variables write scope. Pulse check will still run but won't track state across runs.");
+    }
   }
 }
 

@@ -36,5 +36,5 @@ jobs:
       - name: Run pulse check
         run: node scripts/pulse-check.mjs check
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_WITH_WORKFLOW }}
+          GH_TOKEN: ${{ secrets.PAT_WITH_WORKFLOW }}
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
