@@ -158,7 +158,7 @@ This survives ephemeral runner cycles — every `ubuntu-latest` VM reads the lat
     }
   },
   "retryBudget": {
-    "DVA-47": { "today": "2026-03-16", "count": 0 }
+    "DVA-47": { "day": "2026-03-16", "count": 0 }
   }
 }
 ```
