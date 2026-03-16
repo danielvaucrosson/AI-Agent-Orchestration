@@ -329,5 +329,113 @@ export function buildRecoveryPlan(parentId, failedTasks) {
   return { parentId, actions, report: lines.join('\n') };
 }
 
-/** @todo Implemented in Task 8 */
-export function parseCLI() { throw new Error('Not yet implemented'); }
+/**
+ * Parse CLI arguments.
+ * @param {string[]} args - Command line arguments (after node and script)
+ * @returns {Object} Parsed command object
+ */
+export function parseCLI(args) {
+  const command = args[0];
+  const validCommands = ['create-subtasks', 'status', 'merge', 'recover'];
+
+  if (!validCommands.includes(command)) {
+    throw new Error(`Unknown command: "${command}". Valid: ${validCommands.join(', ')}`);
+  }
+
+  const parentId = args[1];
+  if (!parentId) {
+    throw new Error('Issue ID required (e.g., DVA-18)');
+  }
+
+  const result = { command, parentId };
+
+  if (command === 'create-subtasks') {
+    const subtasksJson = args[2];
+    if (!subtasksJson) throw new Error('Subtask definitions JSON required');
+    result.subtasks = parseSubtaskDefs(subtasksJson);
+  }
+
+  if (command === 'merge') {
+    const intoIdx = args.indexOf('--into');
+    result.targetBranch = intoIdx !== -1 ? args[intoIdx + 1] : 'main';
+  }
+
+  return result;
+}
+
+// --- Main CLI Entry Point ---
+
+async function main() {
+  const args = process.argv.slice(2);
+
+  if (args.length === 0 || args[0] === '--help') {
+    console.log(`Usage:
+  orchestrator.mjs create-subtasks <ISSUE-ID> '<json>'  Create sub-issues and branches
+  orchestrator.mjs status <ISSUE-ID>                     Check progress of all sub-tasks
+  orchestrator.mjs merge <ISSUE-ID> [--into <branch>]    Merge completed sub-branches
+  orchestrator.mjs recover <ISSUE-ID>                    Show recovery plan for failures`);
+    return;
+  }
+
+  const parsed = parseCLI(args);
+
+  switch (parsed.command) {
+    case 'create-subtasks': {
+      const validated = validateSubtaskDefs(parsed.subtasks);
+      console.log(`Creating ${validated.length} sub-issues for ${parsed.parentId}...`);
+      const created = await createSubIssues(parsed.parentId, validated);
+      console.log(`\nCreated sub-issues:`);
+      for (const c of created) {
+        console.log(`  ${c.identifier}: ${c.title} → ${c.branchName}`);
+      }
+      console.log(`\nCreating branches...`);
+      createSubBranches('main', parsed.parentId, validated);
+      console.log('Done. Branches created and ready for work.');
+      break;
+    }
+
+    case 'status': {
+      const progress = await checkProgress(parsed.parentId);
+      console.log(formatProgress(parsed.parentId, progress));
+      break;
+    }
+
+    case 'merge': {
+      const branches = discoverSubBranches(parsed.parentId);
+      if (branches.length === 0) {
+        console.log(`No sub-branches found for ${parsed.parentId}.`);
+        return;
+      }
+      console.log(`Pre-flight check on ${branches.length} branches...`);
+      const check = preflightCheck(branches, parsed.targetBranch);
+      if (!check.clean) {
+        console.log('⚠️ Conflicts detected:');
+        for (const c of check.conflicts) {
+          console.log(`  ${c.branchA} ↔ ${c.branchB}: ${c.files.join(', ')}`);
+        }
+        console.log('\nResolve conflicts before merging.');
+        return;
+      }
+      console.log('Pre-flight clean. Merging...');
+      const result = mergeBranches(parsed.targetBranch, branches);
+      console.log(`Merged: ${result.merged.length}/${branches.length}`);
+      if (result.failed.length > 0) {
+        console.log('Failed:');
+        for (const f of result.failed) console.log(`  ${f.branch}: ${f.error}`);
+      }
+      break;
+    }
+
+    case 'recover': {
+      const progress = await checkProgress(parsed.parentId);
+      const failed = findFailed(progress);
+      const plan = buildRecoveryPlan(parsed.parentId, failed);
+      console.log(plan.report);
+      break;
+    }
+  }
+}
+
+// Run if executed directly (imports already at top of file)
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) main().catch(err => { console.error(err.message); process.exit(1); });

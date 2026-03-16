@@ -434,3 +434,39 @@ describe('buildRecoveryPlan', () => {
     assert.ok(plan.report.includes('No failures'));
   });
 });
+
+describe('parseCLI', () => {
+  it('parses create-subtasks command', () => {
+    const result = parseCLI(['create-subtasks', 'DVA-18', '[{"title":"A","description":"D","branchSuffix":"a"},{"title":"B","description":"D","branchSuffix":"b"}]']);
+    assert.equal(result.command, 'create-subtasks');
+    assert.equal(result.parentId, 'DVA-18');
+    assert.equal(result.subtasks.length, 2);
+  });
+
+  it('parses status command', () => {
+    const result = parseCLI(['status', 'DVA-18']);
+    assert.equal(result.command, 'status');
+    assert.equal(result.parentId, 'DVA-18');
+  });
+
+  it('parses merge command', () => {
+    const result = parseCLI(['merge', 'DVA-18', '--into', 'main']);
+    assert.equal(result.command, 'merge');
+    assert.equal(result.parentId, 'DVA-18');
+    assert.equal(result.targetBranch, 'main');
+  });
+
+  it('parses recover command', () => {
+    const result = parseCLI(['recover', 'DVA-18']);
+    assert.equal(result.command, 'recover');
+    assert.equal(result.parentId, 'DVA-18');
+  });
+
+  it('throws on unknown command', () => {
+    assert.throws(() => parseCLI(['unknown']), { message: /unknown command/i });
+  });
+
+  it('throws on missing parent ID', () => {
+    assert.throws(() => parseCLI(['status']), { message: /issue ID required/i });
+  });
+});
