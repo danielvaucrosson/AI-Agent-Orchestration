@@ -9,6 +9,7 @@ import {
   pruneState,
   extractIssueFromRun,
   isPulseCheckRun,
+  diagnose,
 } from "../scripts/pulse-check.mjs";
 
 describe("classifyRun", () => {
@@ -264,5 +265,27 @@ describe("isPulseCheckRun", () => {
   it("returns false when inputs is missing", () => {
     const run = { name: "agent-worker" };
     assert.equal(isPulseCheckRun(run), false);
+  });
+});
+
+describe("diagnose", () => {
+  it("returns runner-offline for stuck-queued with offline runner", () => {
+    assert.equal(diagnose("stuck-queued", { online: false }, null), "runner-offline");
+  });
+
+  it("returns transient for stuck-queued with online runner", () => {
+    assert.equal(diagnose("stuck-queued", { online: true }, null), "transient");
+  });
+
+  it("returns log-errors for stuck-running with error logs", () => {
+    assert.equal(diagnose("stuck-running", { online: true }, "Error: OOM killed"), "log-errors");
+  });
+
+  it("returns no-errors for stuck-running with clean logs", () => {
+    assert.equal(diagnose("stuck-running", { online: true }, null), "no-errors");
+  });
+
+  it("returns runner-offline for stuck-running with offline runner", () => {
+    assert.equal(diagnose("stuck-running", { online: false }, "Error: timeout"), "runner-offline");
   });
 });

@@ -114,3 +114,17 @@ export function isPulseCheckRun(run) {
   if ((run.display_title || "").includes("PULSE-CHECK")) return true;
   return false;
 }
+
+/**
+ * Diagnose why a workflow run is stuck.
+ * @param {"stuck-queued"|"stuck-running"} classification
+ * @param {{ online: boolean }} runnerStatus
+ * @param {string|null} logSummary - error summary from logs, or null if clean
+ * @returns {"runner-offline"|"transient"|"log-errors"|"no-errors"}
+ */
+export function diagnose(classification, runnerStatus, logSummary) {
+  if (!runnerStatus.online) return "runner-offline";
+  if (classification === "stuck-queued") return "transient";
+  if (logSummary) return "log-errors";
+  return "no-errors";
+}
