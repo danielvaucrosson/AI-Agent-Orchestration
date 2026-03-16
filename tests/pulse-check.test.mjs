@@ -454,6 +454,31 @@ describe("orchestrate", () => {
     assert.deepEqual(cancelled, [400]);
   });
 
+  it("Level 2 recovery when budget count is 1 (cancel-requeue regardless of diagnosis)", async () => {
+    const cancelled = [];
+    const dispatched = [];
+    const comments = [];
+    const result = await orchestrate(baseDeps({
+      fetchRuns: async () => [
+        { id: 600, status: "queued", created_at: "2026-03-16T00:55:00Z", inputs: { issue_id: "DVA-20", issue_title: "Level 2 task" }, name: "agent-worker", display_title: "DVA-20: Level 2 task" },
+      ],
+      fetchRunners: async () => ({ online: true }), // runner is online — but Level 2 cancels regardless
+      loadState: async () => ({
+        runs: {},
+        retryBudget: { "DVA-20": { count: 1, day: TODAY } },
+      }),
+      cancelRun: async (id) => cancelled.push(id),
+      dispatchRun: async (issueId, title) => dispatched.push({ issueId, title }),
+      postLinearComment: async (id, msg) => comments.push({ id, msg }),
+    }));
+    assert.equal(result.actionsCount, 1);
+    assert.deepEqual(cancelled, [600]);
+    assert.equal(dispatched.length, 1);
+    assert.equal(dispatched[0].issueId, "DVA-20");
+    assert.equal(result.details[0].level, 2);
+    assert.equal(comments.length, 1);
+  });
+
   it("stuck PULSE-CHECK investigator triggers immediate Level 3", async () => {
     const cancelled = [];
     let ghIssueCreated = false;

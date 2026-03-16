@@ -10,7 +10,17 @@ const QUEUE_TIMEOUT_MS = 2 * 60 * 1000;
 const RUNNING_TIMEOUT_MS = 60 * 60 * 1000;
 const MAX_STUCK_OBSERVATIONS = 3;
 const MAX_PULSE_RETRIES = 2;
+const DEFAULT_DAILY_LIMIT = 4;
 const ISSUE_RE = /\b([A-Z]{1,5}-\d+)\b/;
+
+function getDailyLimit() {
+  const envVal = process.env.AGENT_MAX_DAILY_RUNS;
+  if (envVal) {
+    const parsed = parseInt(envVal, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return DEFAULT_DAILY_LIMIT;
+}
 
 /**
  * Classify a workflow run's health based on its status and elapsed time.
@@ -130,14 +140,6 @@ export function diagnose(classification, runnerStatus, logSummary) {
 }
 
 /**
- * Decide what recovery action to take for a stuck run.
- * @param {"runner-offline"|"transient"|"log-errors"|"no-errors"} diagnosis
- * @param {{ seenCount: number, investigationDispatched: boolean }} runState
- * @param {number} budgetCount - retryBudget[issueId].count
- * @param {boolean} isPulseCheck - true if this is a PULSE-CHECK investigator run
- * @returns {{ action: "wait"|"cancel-requeue"|"halt-incident"|"investigate", level?: number }}
- */
-/**
  * Main orchestration function. Accepts a `deps` object for testability.
  * All side effects are passed in via deps.
  * Returns { actionsCount, details }.
@@ -217,7 +219,7 @@ export async function orchestrate(deps) {
 
     if (decision.action === "investigate") {
       const dailyCount = await countDailyRuns();
-      if (dailyCount < 4 && !runState.investigationDispatched) {
+      if (dailyCount < getDailyLimit() && !runState.investigationDispatched) {
         await dispatchRun("PULSE-CHECK", `Investigate stuck agent ${issueId} (run ${runId})`);
         runState.investigationDispatched = true;
         await logAudit(`[pulse-check] Dispatched Claude investigation for ${issueId} (run ${runId})`);
@@ -316,6 +318,14 @@ export async function orchestrate(deps) {
   return { actionsCount, details };
 }
 
+/**
+ * Decide what recovery action to take for a stuck run.
+ * @param {"runner-offline"|"transient"|"log-errors"|"no-errors"} diagnosis
+ * @param {{ seenCount: number, investigationDispatched: boolean }} runState
+ * @param {number} budgetCount - retryBudget[issueId].count
+ * @param {boolean} isPulseCheck - true if this is a PULSE-CHECK investigator run
+ * @returns {{ action: "wait"|"cancel-requeue"|"halt-incident"|"investigate", level?: number }}
+ */
 export function decideAction(diagnosis, runState, budgetCount, isPulseCheck = false) {
   // Stuck PULSE-CHECK investigator → immediate Level 3
   if (isPulseCheck) {
