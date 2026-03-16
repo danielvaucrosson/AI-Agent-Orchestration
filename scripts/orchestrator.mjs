@@ -226,11 +226,74 @@ export function formatProgress(parentId, progress) {
   return lines.join('\n');
 }
 
-/** @todo Implemented in Task 6 */
-export async function preflightCheck() { throw new Error('Not yet implemented'); }
+/**
+ * Pre-flight check for conflicts between sub-branches.
+ * @param {string[]} branches - Sub-branch names
+ * @param {string} baseBranch - Common ancestor branch
+ * @param {Object} [deps] - Injected dependencies
+ * @returns {{clean: boolean, conflicts: Array, warnings: Array}}
+ */
+export function preflightCheck(branches, baseBranch, deps = {}) {
+  const runGit = deps.runGit || defaultRunGit;
+  const conflicts = [];
+  const warnings = [];
 
-/** @todo Implemented in Task 6 */
-export async function mergeBranches() { throw new Error('Not yet implemented'); }
+  const branchFiles = {};
+  for (const branch of branches) {
+    try {
+      const mergeBase = runGit(`merge-base ${baseBranch} ${branch}`);
+      const files = runGit(`diff --name-only ${mergeBase}..${branch}`);
+      branchFiles[branch] = new Set(files.split('\n').filter(Boolean));
+    } catch {
+      branchFiles[branch] = new Set();
+    }
+  }
+
+  for (let i = 0; i < branches.length; i++) {
+    for (let j = i + 1; j < branches.length; j++) {
+      const filesA = branchFiles[branches[i]];
+      const filesB = branchFiles[branches[j]];
+      const overlap = [...filesA].filter(f => filesB.has(f));
+
+      if (overlap.length > 0) {
+        conflicts.push({
+          branchA: branches[i],
+          branchB: branches[j],
+          files: overlap,
+        });
+      }
+    }
+  }
+
+  return { clean: conflicts.length === 0, conflicts, warnings };
+}
+
+/**
+ * Merge sub-branches into a target branch.
+ * @param {string} targetBranch - Branch to merge into
+ * @param {string[]} subBranches - Branches to merge
+ * @param {Object} [deps] - Injected dependencies
+ * @returns {{merged: string[], failed: Array}}
+ */
+export function mergeBranches(targetBranch, subBranches, deps = {}) {
+  const runGit = deps.runGit || defaultRunGit;
+  const merged = [];
+  const failed = [];
+
+  runGit(`checkout ${targetBranch}`);
+
+  for (const branch of subBranches) {
+    try {
+      runGit(`merge --no-ff ${branch} -m "Merge ${branch} into ${targetBranch}"`);
+      merged.push(branch);
+    } catch (err) {
+      runGit('merge --abort');
+      failed.push({ branch, error: err.message });
+    }
+  }
+
+  return { merged, failed };
+}
 
 /** @todo Implemented in Task 7 */
 export function buildRecoveryPlan() { throw new Error('Not yet implemented'); }

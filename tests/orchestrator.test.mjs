@@ -350,3 +350,55 @@ describe('formatProgress', () => {
     assert.ok(report.includes('Done'));
   });
 });
+
+describe('preflightCheck', () => {
+  it('returns clean when no conflicts between sub-branches', () => {
+    const mockDeps = {
+      runGit: (cmd) => {
+        if (cmd.includes('merge-tree')) return '';
+        if (cmd.includes('merge-base')) return 'abc123';
+        return '';
+      },
+    };
+
+    const result = preflightCheck(['feature/DVA-18a-api', 'feature/DVA-18b-db'], 'main', mockDeps);
+    assert.equal(result.clean, true);
+    assert.equal(result.conflicts.length, 0);
+  });
+
+  it('detects conflicts between sub-branches', () => {
+    const mockDeps = {
+      runGit: (cmd) => {
+        if (cmd.includes('merge-base')) return 'abc123';
+        if (cmd.includes('diff') && cmd.includes('--name-only')) {
+          return 'src/shared.mjs';
+        }
+        return '';
+      },
+    };
+
+    const result = preflightCheck(['feature/DVA-18a-api', 'feature/DVA-18b-db'], 'main', mockDeps);
+    assert.ok(result.conflicts.length > 0 || result.warnings.length > 0);
+  });
+});
+
+describe('mergeBranches', () => {
+  it('merges each sub-branch into target with --no-ff', () => {
+    const commands = [];
+    const mockDeps = {
+      runGit: (cmd) => { commands.push(cmd); return ''; },
+    };
+
+    mergeBranches('feature/DVA-18-main', ['feature/DVA-18a-api', 'feature/DVA-18b-db'], mockDeps);
+
+    assert.ok(commands.some(c => c.includes('checkout feature/DVA-18-main')));
+    assert.ok(commands.some(c => c.includes('merge --no-ff feature/DVA-18a-api')));
+    assert.ok(commands.some(c => c.includes('merge --no-ff feature/DVA-18b-db')));
+  });
+
+  it('returns list of merged branches', () => {
+    const mockDeps = { runGit: () => '' };
+    const result = mergeBranches('main', ['feature/DVA-18a-api', 'feature/DVA-18b-db'], mockDeps);
+    assert.deepEqual(result.merged, ['feature/DVA-18a-api', 'feature/DVA-18b-db']);
+  });
+});
