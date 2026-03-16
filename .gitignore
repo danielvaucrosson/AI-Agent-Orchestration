@@ -29,6 +29,9 @@ npm-debug.log*
 .claude/audit/*.jsonl
 .claude/audit/_pr-comment.md
 
+# Recovery events log (runtime data, not source-controlled)
+.claude/recovery-events.jsonl
+
 # Python
 __pycache__/
 *.py[cod]

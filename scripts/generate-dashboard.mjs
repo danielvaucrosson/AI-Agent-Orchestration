@@ -10,7 +10,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
-import { buildDashboardData, extractRunInfo } from "./agent-dashboard.mjs";
+import { buildDashboardData, extractRunInfo, readRecoveryEvents } from "./agent-dashboard.mjs";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -137,9 +137,9 @@ export async function enrichWithLinearStatus(
 export async function buildStaticData(
   runs,
   prs,
-  { repoUrl, fetchStatusFn = fetchLinearStatus } = {}
+  { repoUrl, fetchStatusFn = fetchLinearStatus, recoveryEvents } = {}
 ) {
-  const raw = { runs, prs };
+  const raw = { runs, prs, recoveryEvents: recoveryEvents || [] };
   const data = buildDashboardData(raw);
 
   // Strip internal fields
@@ -214,6 +214,34 @@ export function generateStaticHTML(data) {
     text-transform: uppercase; letter-spacing: 1px;
     margin-bottom: 10px;
   }
+  .recovery-panel { margin-bottom: 24px; }
+  .recovery-alert-banner {
+    background: rgba(248, 81, 73, 0.15); border: 1px solid #f85149;
+    border-radius: 8px; padding: 10px 16px; margin-bottom: 12px;
+    color: #f85149; font-weight: 600; font-size: 13px;
+  }
+  .recovery-cards { display: flex; gap: 12px; }
+  .recovery-card {
+    flex: 1; background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px; padding: 16px; text-align: center;
+    cursor: pointer; transition: border-color 0.2s;
+  }
+  .recovery-card:hover { border-color: #58a6ff; }
+  .recovery-card.level-3-active { border-color: #f85149; border-width: 2px; }
+  .recovery-value { font-size: 28px; font-weight: bold; }
+  .recovery-label { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+  .recovery-sublabel { color: #8b949e; font-size: 11px; margin-top: 2px; }
+  .recovery-today { color: #8b949e; font-size: 11px; margin-top: 4px; }
+  .recovery-detail {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 14px; margin-top: 10px; display: none;
+  }
+  .recovery-detail.open { display: block; }
+  .recovery-detail-header { font-size: 12px; text-transform: uppercase; color: #8b949e; letter-spacing: 1px; margin-bottom: 8px; }
+  .recovery-event { padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 13px; display: flex; justify-content: space-between; }
+  .recovery-event:last-child { border-bottom: none; }
+  .recovery-event-issue { color: #58a6ff; font-weight: 500; }
+  .recovery-event-time { color: #8b949e; font-size: 12px; }
   .agents { margin-bottom: 24px; }
   .agent-card {
     background: #161b22; border: 1px solid #30363d;
@@ -278,6 +306,7 @@ export function generateStaticHTML(data) {
 </header>
 <div class="container">
   <div class="gauges" id="gauges"></div>
+  <div id="recovery-panel"></div>
   <div class="agents">
     <div class="section-label">Active Agents</div>
     <div id="agents-list"></div>
@@ -347,7 +376,46 @@ function renderHistory(history) {
   return '<table><thead><tr><th>Status</th><th>Issue</th><th>Title</th><th>PR</th><th>Duration</th><th>When</th></tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
+var LEVEL_META = {
+  1: { label: 'Level 1', desc: 'Auto-fix', color: '#d29922' },
+  2: { label: 'Level 2', desc: 'Kill + Retry', color: '#f0883e' },
+  3: { label: 'Level 3', desc: 'Halt + Incident', color: '#f85149' },
+};
+
+function renderRecoveryPanel(recovery) {
+  if (!recovery) return '';
+  var levels = recovery.levels;
+  var total = levels[1].allTime + levels[2].allTime + levels[3].allTime;
+  if (total === 0) return '';
+  var alert = recovery.hasLevel3Today
+    ? '<div class="recovery-alert-banner">&#9888; Level 3 incidents detected today</div>' : '';
+  var cards = [1,2,3].map(function(lvl) {
+    var m = LEVEL_META[lvl]; var d = levels[lvl];
+    var ac = lvl === 3 && d.today > 0 ? ' level-3-active' : '';
+    return '<div class="recovery-card' + ac + '" onclick="toggleRecoveryDetail(' + lvl + ')">'
+      + '<div class="recovery-value" style="color:' + m.color + '">' + d.allTime + '</div>'
+      + '<div class="recovery-label" style="color:' + m.color + '">' + escapeHtml(m.label) + '</div>'
+      + '<div class="recovery-sublabel">' + escapeHtml(m.desc) + '</div>'
+      + '<div class="recovery-today">' + d.today + ' today</div></div>';
+  }).join('');
+  var details = [1,2,3].map(function(lvl) {
+    var m = LEVEL_META[lvl]; var d = levels[lvl];
+    if (!d.events.length) return '<div class="recovery-detail" id="recovery-detail-' + lvl + '"><div class="recovery-detail-header">' + escapeHtml(m.label) + ' Events</div><div style="color:#8b949e;font-style:italic">No events</div></div>';
+    var rows = d.events.slice(0,10).map(function(e) {
+      return '<div class="recovery-event"><div><span class="recovery-event-issue">' + escapeHtml(e.issueId || '') + '</span> ' + escapeHtml(e.issueTitle || '') + '</div><div class="recovery-event-time">' + (e.timestamp ? new Date(e.timestamp).toLocaleString() : '') + '</div></div>';
+    }).join('');
+    return '<div class="recovery-detail" id="recovery-detail-' + lvl + '"><div class="recovery-detail-header">' + escapeHtml(m.label) + ' Events (' + d.events.length + ')</div>' + rows + '</div>';
+  }).join('');
+  return '<div class="recovery-panel"><div class="section-label">Recovery Levels</div>' + alert + '<div class="recovery-cards">' + cards + '</div>' + details + '</div>';
+}
+
+function toggleRecoveryDetail(level) {
+  var el = document.getElementById('recovery-detail-' + level);
+  if (el) el.classList.toggle('open');
+}
+
 document.getElementById('gauges').innerHTML = renderGauges(DASHBOARD_DATA.gauges);
+document.getElementById('recovery-panel').innerHTML = renderRecoveryPanel(DASHBOARD_DATA.recoveryLevels);
 document.getElementById('agents-list').innerHTML = renderAgents(DASHBOARD_DATA.activeAgents);
 document.getElementById('history-table').innerHTML = renderHistory(DASHBOARD_DATA.history);
 document.getElementById('build-time').textContent = 'Built: ' + new Date(DASHBOARD_DATA.buildTime).toLocaleString();
@@ -376,8 +444,11 @@ if (isMain) {
   const prs = await fetchRecentPRs(repo);
   console.log(`  ${prs.length} PRs found`);
 
+  const recoveryEvents = readRecoveryEvents();
+  console.log(`  ${recoveryEvents.length} recovery event(s) found`);
+
   console.log("Building dashboard data (with Linear enrichment)...");
-  const data = await buildStaticData(runs, prs, { repoUrl });
+  const data = await buildStaticData(runs, prs, { repoUrl, recoveryEvents });
 
   console.log("Generating static HTML...");
   const html = generateStaticHTML(data);
