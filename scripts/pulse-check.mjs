@@ -137,6 +137,185 @@ export function diagnose(classification, runnerStatus, logSummary) {
  * @param {boolean} isPulseCheck - true if this is a PULSE-CHECK investigator run
  * @returns {{ action: "wait"|"cancel-requeue"|"halt-incident"|"investigate", level?: number }}
  */
+/**
+ * Main orchestration function. Accepts a `deps` object for testability.
+ * All side effects are passed in via deps.
+ * Returns { actionsCount, details }.
+ */
+export async function orchestrate(deps) {
+  const {
+    fetchRuns, fetchRunners, fetchRunLogs, cancelRun, dispatchRun,
+    loadState, saveState, postLinearComment, createGitHubIssue,
+    logAudit, countDailyRuns, now, today,
+  } = deps;
+
+  const state = await loadState();
+  const runs = await fetchRuns();
+  const runnerStatus = await fetchRunners();
+
+  // Prune state entries for runs no longer active
+  const activeRunIds = new Set(runs.map((r) => String(r.id)));
+  pruneState(state, activeRunIds);
+
+  if (runs.length === 0) {
+    await logAudit("[pulse-check] All clear: no active runs");
+    await saveState(state);
+    return { actionsCount: 0, details: [] };
+  }
+
+  const details = [];
+  let actionsCount = 0;
+
+  for (const run of runs) {
+    const runId = String(run.id);
+    const classification = classifyRun(run, now);
+
+    if (classification === "healthy") continue;
+
+    const issueId = extractIssueFromRun(run);
+    const issueTitle = run.inputs?.issue_title || run.display_title || run.name || "";
+    const pulseCheck = isPulseCheckRun(run);
+
+    // Ensure state entry exists
+    if (!state.runs[runId]) {
+      state.runs[runId] = {
+        issueId,
+        classification,
+        firstSeenAt: new Date(now).toISOString(),
+        seenCount: 0,
+        lastActionAt: null,
+        diagnosis: null,
+        investigationDispatched: false,
+        logSummary: null,
+      };
+    }
+
+    const runState = state.runs[runId];
+    runState.seenCount += 1;
+    runState.classification = classification;
+
+    // Diagnose
+    const logSummary = classification === "stuck-running"
+      ? await fetchRunLogs(run.id)
+      : null;
+    const diagnosis = diagnose(classification, runnerStatus, logSummary);
+    runState.diagnosis = diagnosis;
+    runState.logSummary = logSummary || null;
+
+    // Get budget count (resets daily)
+    const budgetEntry = state.retryBudget[issueId];
+    const budgetCount = (budgetEntry && budgetEntry.day === today)
+      ? budgetEntry.count
+      : 0;
+
+    // Decide action
+    const decision = decideAction(diagnosis, runState, budgetCount, pulseCheck);
+
+    if (decision.action === "wait") {
+      continue;
+    }
+
+    if (decision.action === "investigate") {
+      const dailyCount = await countDailyRuns();
+      if (dailyCount < 4 && !runState.investigationDispatched) {
+        await dispatchRun("PULSE-CHECK", `Investigate stuck agent ${issueId} (run ${runId})`);
+        runState.investigationDispatched = true;
+        await logAudit(`[pulse-check] Dispatched Claude investigation for ${issueId} (run ${runId})`);
+        actionsCount++;
+        details.push({ runId, issueId, action: "investigate", diagnosis });
+      }
+      continue;
+    }
+
+    if (decision.action === "cancel-requeue") {
+      await cancelRun(run.id);
+      incrementBudget(issueId, state, today);
+      runState.lastActionAt = new Date(now).toISOString();
+
+      const levelMsg = `Level ${decision.level} recovery`;
+      await postLinearComment(issueId,
+        `Pulse check: ${issueId} ${classification} (${diagnosis}). ${levelMsg} — cancelled run ${runId} and re-queued.`
+      );
+      await dispatchRun(issueId, issueTitle);
+      await logAudit(`[pulse-check] ${levelMsg}: cancelled ${runId} (${issueId}), diagnosis: ${diagnosis}`);
+
+      actionsCount++;
+      details.push({ runId, issueId, action: "cancel-requeue", level: decision.level, diagnosis });
+      continue;
+    }
+
+    if (decision.action === "halt-incident") {
+      // Cancel ALL active runs
+      for (const r of runs) {
+        await cancelRun(r.id);
+      }
+
+      const timeline = Object.entries(state.runs)
+        .map(([id, s]) => `- Run ${id} (${s.issueId}): ${s.classification}, seen ${s.seenCount}x, diagnosis: ${s.diagnosis}`)
+        .join("\n");
+
+      // Collect log excerpts
+      const logExcerpts = Object.entries(state.runs)
+        .filter(([, s]) => s.logSummary)
+        .map(([id, s]) => `- Run ${id} (${s.issueId}):\n  ${s.logSummary}`)
+        .join("\n");
+
+      const incidentTitle = `Pulse Check Incident: ${issueId} stuck after ${budgetCount} recovery attempts`;
+      const incidentBody = [
+        `## Incident Summary`,
+        ``,
+        `**Task:** ${issueId} — ${issueTitle}`,
+        `**Classification:** ${classification}`,
+        `**Diagnosis:** ${diagnosis}`,
+        `**Recovery attempts:** ${budgetCount}`,
+        `**Runner status:** ${runnerStatus.online ? "online" : "offline"}`,
+        ``,
+        `## Timeline`,
+        ``,
+        timeline,
+        ...(logExcerpts ? [``, `## Log Excerpts`, ``, logExcerpts] : []),
+        ``,
+        `## Action Taken`,
+        ``,
+        `All active agent-worker runs have been cancelled.`,
+      ].join("\n");
+
+      await createGitHubIssue(incidentTitle, incidentBody);
+
+      // Notify ALL affected issues
+      const affectedIssues = new Set(
+        Object.values(state.runs).map((s) => s.issueId).filter((id) => id !== "unknown")
+      );
+      affectedIssues.add(issueId);
+      for (const affected of affectedIssues) {
+        await postLinearComment(affected,
+          `Pulse check incident: ${issueId} stuck after ${budgetCount} recovery attempts. All agents halted. See GitHub issue for details.`
+        );
+      }
+      await logAudit(`[pulse-check] Level 3 incident: ${issueId} — all agents halted`);
+
+      actionsCount++;
+      details.push({ runId, issueId, action: "halt-incident", level: 3, diagnosis });
+      break; // Stop processing — we've halted everything
+    }
+  }
+
+  // Log healthy summary if no actions taken
+  if (actionsCount === 0) {
+    const summary = runs.map((r) => {
+      const id = extractIssueFromRun(r);
+      const elapsed = Math.floor((now - new Date(r.run_started_at || r.created_at).getTime()) / 1000);
+      const mins = Math.floor(elapsed / 60);
+      const secs = elapsed % 60;
+      return `${id} (${mins}m ${secs}s)`;
+    }).join(", ");
+    await logAudit(`[pulse-check] All clear: ${runs.length} active run(s): ${summary}, runner ${runnerStatus.online ? "online" : "offline"}`);
+  }
+
+  await saveState(state);
+  return { actionsCount, details };
+}
+
 export function decideAction(diagnosis, runState, budgetCount, isPulseCheck = false) {
   // Stuck PULSE-CHECK investigator → immediate Level 3
   if (isPulseCheck) {

@@ -11,6 +11,7 @@ import {
   isPulseCheckRun,
   diagnose,
   decideAction,
+  orchestrate,
 } from "../scripts/pulse-check.mjs";
 
 describe("classifyRun", () => {
@@ -345,5 +346,226 @@ describe("decideAction", () => {
   it("returns halt-incident Level 3 immediately for PULSE-CHECK runs", () => {
     const result = decideAction("no-errors", { seenCount: 1, investigationDispatched: false }, 0, true);
     assert.deepEqual(result, { action: "halt-incident", level: 3 });
+  });
+});
+
+// --- orchestrate tests ---
+
+const NOW = new Date("2026-03-16T01:00:00Z").getTime();
+const TODAY = "2026-03-16";
+
+function baseDeps(overrides = {}) {
+  return {
+    fetchRuns: async () => [],
+    fetchRunners: async () => ({ online: true }),
+    fetchRunLogs: async () => null,
+    cancelRun: async () => {},
+    dispatchRun: async () => {},
+    loadState: async () => ({ runs: {}, retryBudget: {} }),
+    saveState: async () => {},
+    postLinearComment: async () => {},
+    createGitHubIssue: async () => {},
+    logAudit: async () => {},
+    countDailyRuns: async () => 0,
+    now: NOW,
+    today: TODAY,
+    ...overrides,
+  };
+}
+
+describe("orchestrate", () => {
+  it("no active runs returns actionsCount 0 and logs All clear", async () => {
+    const logs = [];
+    const result = await orchestrate(baseDeps({
+      logAudit: async (msg) => logs.push(msg),
+    }));
+    assert.equal(result.actionsCount, 0);
+    assert.deepEqual(result.details, []);
+    assert.ok(logs.some((m) => m.includes("All clear")));
+  });
+
+  it("healthy runs return actionsCount 0", async () => {
+    const logs = [];
+    const result = await orchestrate(baseDeps({
+      fetchRuns: async () => [
+        { id: 100, status: "in_progress", run_started_at: "2026-03-16T00:30:00Z", created_at: "2026-03-16T00:29:00Z", inputs: { issue_id: "DVA-10" }, name: "agent-worker", display_title: "DVA-10: Fix" },
+      ],
+      logAudit: async (msg) => logs.push(msg),
+    }));
+    assert.equal(result.actionsCount, 0);
+    assert.ok(logs.some((m) => m.includes("All clear") && m.includes("1 active run")));
+  });
+
+  it("stuck-queued + runner offline cancels run, dispatches requeue, posts Linear comment", async () => {
+    const cancelled = [];
+    const dispatched = [];
+    const comments = [];
+    const result = await orchestrate(baseDeps({
+      fetchRuns: async () => [
+        { id: 200, status: "queued", created_at: "2026-03-16T00:50:00Z", inputs: { issue_id: "DVA-11", issue_title: "Fix auth" }, name: "agent-worker", display_title: "DVA-11: Fix auth" },
+      ],
+      fetchRunners: async () => ({ online: false }),
+      cancelRun: async (id) => cancelled.push(id),
+      dispatchRun: async (issueId, title) => dispatched.push({ issueId, title }),
+      postLinearComment: async (issueId, body) => comments.push({ issueId, body }),
+    }));
+    assert.equal(result.actionsCount, 1);
+    assert.equal(result.details[0].action, "cancel-requeue");
+    assert.deepEqual(cancelled, [200]);
+    assert.equal(dispatched.length, 1);
+    assert.equal(dispatched[0].issueId, "DVA-11");
+    assert.equal(comments.length, 1);
+    assert.ok(comments[0].body.includes("DVA-11"));
+  });
+
+  it("stuck-queued + runner online increments seenCount, no action (transient wait)", async () => {
+    let savedState = null;
+    const result = await orchestrate(baseDeps({
+      fetchRuns: async () => [
+        { id: 300, status: "queued", created_at: "2026-03-16T00:50:00Z", inputs: { issue_id: "DVA-12" }, name: "agent-worker", display_title: "DVA-12: task" },
+      ],
+      fetchRunners: async () => ({ online: true }),
+      saveState: async (s) => { savedState = s; },
+    }));
+    assert.equal(result.actionsCount, 0);
+    assert.ok(savedState);
+    assert.equal(savedState.runs["300"].seenCount, 1);
+  });
+
+  it("budget exhausted triggers Level 3 halt-incident and creates GitHub issue", async () => {
+    const cancelled = [];
+    let ghIssueCreated = false;
+    const result = await orchestrate(baseDeps({
+      fetchRuns: async () => [
+        { id: 400, status: "queued", created_at: "2026-03-16T00:50:00Z", inputs: { issue_id: "DVA-13", issue_title: "Broken task" }, name: "agent-worker", display_title: "DVA-13: Broken" },
+      ],
+      fetchRunners: async () => ({ online: false }),
+      loadState: async () => ({
+        runs: {},
+        retryBudget: { "DVA-13": { count: 2, day: TODAY } },
+      }),
+      cancelRun: async (id) => cancelled.push(id),
+      createGitHubIssue: async () => { ghIssueCreated = true; },
+    }));
+    assert.equal(result.actionsCount, 1);
+    assert.equal(result.details[0].action, "halt-incident");
+    assert.equal(result.details[0].level, 3);
+    assert.ok(ghIssueCreated);
+    assert.deepEqual(cancelled, [400]);
+  });
+
+  it("stuck PULSE-CHECK investigator triggers immediate Level 3", async () => {
+    const cancelled = [];
+    let ghIssueCreated = false;
+    const result = await orchestrate(baseDeps({
+      fetchRuns: async () => [
+        { id: 500, status: "queued", created_at: "2026-03-16T00:50:00Z", inputs: { issue_id: "PULSE-CHECK" }, name: "PULSE-CHECK monitor", display_title: "PULSE-CHECK" },
+      ],
+      fetchRunners: async () => ({ online: true }),
+      cancelRun: async (id) => cancelled.push(id),
+      createGitHubIssue: async () => { ghIssueCreated = true; },
+    }));
+    assert.equal(result.actionsCount, 1);
+    assert.equal(result.details[0].action, "halt-incident");
+    assert.equal(result.details[0].level, 3);
+    assert.ok(ghIssueCreated);
+  });
+
+  it("prunes state for inactive runs", async () => {
+    let savedState = null;
+    await orchestrate(baseDeps({
+      fetchRuns: async () => [],
+      loadState: async () => ({
+        runs: { "999": { issueId: "DVA-99", classification: "stuck-queued", seenCount: 3 } },
+        retryBudget: {},
+      }),
+      saveState: async (s) => { savedState = s; },
+    }));
+    assert.ok(savedState);
+    assert.deepEqual(savedState.runs, {});
+  });
+
+  it("multiple stuck runs handled independently (both cancelled)", async () => {
+    const cancelled = [];
+    const dispatched = [];
+    const result = await orchestrate(baseDeps({
+      fetchRuns: async () => [
+        { id: 601, status: "queued", created_at: "2026-03-16T00:50:00Z", inputs: { issue_id: "DVA-20", issue_title: "Task A" }, name: "agent-worker", display_title: "DVA-20" },
+        { id: 602, status: "queued", created_at: "2026-03-16T00:50:00Z", inputs: { issue_id: "DVA-21", issue_title: "Task B" }, name: "agent-worker", display_title: "DVA-21" },
+      ],
+      fetchRunners: async () => ({ online: false }),
+      cancelRun: async (id) => cancelled.push(id),
+      dispatchRun: async (issueId, title) => dispatched.push({ issueId, title }),
+    }));
+    assert.equal(result.actionsCount, 2);
+    assert.deepEqual(cancelled, [601, 602]);
+    assert.equal(dispatched.length, 2);
+  });
+
+  it("skips Claude investigation when daily quota full (countDailyRuns returns 4)", async () => {
+    const dispatched = [];
+    const result = await orchestrate(baseDeps({
+      fetchRuns: async () => [
+        { id: 700, status: "in_progress", run_started_at: "2026-03-15T23:00:00Z", created_at: "2026-03-15T22:59:00Z", inputs: { issue_id: "DVA-30" }, name: "agent-worker", display_title: "DVA-30" },
+      ],
+      fetchRunners: async () => ({ online: true }),
+      fetchRunLogs: async () => null,
+      loadState: async () => ({
+        runs: {
+          "700": {
+            issueId: "DVA-30",
+            classification: "stuck-running",
+            firstSeenAt: "2026-03-16T00:00:00Z",
+            seenCount: 1,
+            lastActionAt: null,
+            diagnosis: null,
+            investigationDispatched: false,
+            logSummary: null,
+          },
+        },
+        retryBudget: {},
+      }),
+      countDailyRuns: async () => 4,
+      dispatchRun: async (issueId, title) => dispatched.push({ issueId, title }),
+    }));
+    // seenCount becomes 2 (1 existing + 1 increment), no-errors + seenCount 2 => investigate
+    // but countDailyRuns is 4, so investigation is skipped
+    assert.equal(result.actionsCount, 0);
+    assert.equal(dispatched.length, 0);
+  });
+
+  it("Level 3 notifies ALL affected issues (2 issues both get Linear comments)", async () => {
+    const comments = [];
+    const result = await orchestrate(baseDeps({
+      fetchRuns: async () => [
+        { id: 801, status: "queued", created_at: "2026-03-16T00:50:00Z", inputs: { issue_id: "DVA-40", issue_title: "Task X" }, name: "agent-worker", display_title: "DVA-40" },
+        { id: 802, status: "queued", created_at: "2026-03-16T00:50:00Z", inputs: { issue_id: "DVA-41", issue_title: "Task Y" }, name: "agent-worker", display_title: "DVA-41" },
+      ],
+      fetchRunners: async () => ({ online: false }),
+      loadState: async () => ({
+        runs: {
+          "802": {
+            issueId: "DVA-41",
+            classification: "stuck-queued",
+            firstSeenAt: "2026-03-16T00:00:00Z",
+            seenCount: 1,
+            lastActionAt: null,
+            diagnosis: null,
+            investigationDispatched: false,
+            logSummary: null,
+          },
+        },
+        retryBudget: { "DVA-40": { count: 2, day: TODAY } },
+      }),
+      cancelRun: async () => {},
+      createGitHubIssue: async () => {},
+      postLinearComment: async (issueId, body) => comments.push({ issueId, body }),
+    }));
+    assert.equal(result.actionsCount, 1);
+    assert.equal(result.details[0].action, "halt-incident");
+    // Both DVA-40 and DVA-41 should receive notifications
+    const notifiedIssues = comments.map((c) => c.issueId).sort();
+    assert.ok(notifiedIssues.includes("DVA-40"), "DVA-40 should be notified");
+    assert.ok(notifiedIssues.includes("DVA-41"), "DVA-41 should be notified");
   });
 });
