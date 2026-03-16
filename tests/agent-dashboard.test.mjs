@@ -289,6 +289,36 @@ describe("buildDashboardData", () => {
     assert.ok(data.history[0].prUrl.includes("/pull/18"));
   });
 
+  it("includes durationMs in history entries", () => {
+    const start = "2026-03-15T10:00:00Z";
+    const end = "2026-03-15T10:05:30Z"; // 5m 30s = 330000ms
+    const data = buildDashboardData({
+      runs: [
+        {
+          id: 20, status: "completed", conclusion: "success",
+          created_at: start, run_started_at: start, updated_at: end,
+          inputs: { issue_id: "DVA-99", issue_title: "Test" },
+        },
+      ],
+      prs: [],
+    });
+    assert.equal(data.history[0].durationMs, 330_000);
+    assert.equal(data.history[0].duration, "5m 30s");
+  });
+
+  it("sets durationMs to 0 for missing timestamps", () => {
+    const data = buildDashboardData({
+      runs: [
+        {
+          id: 21, status: "completed", conclusion: "failure",
+          created_at: null, run_started_at: null, updated_at: null,
+        },
+      ],
+      prs: [],
+    });
+    assert.equal(data.history[0].durationMs, 0);
+  });
+
   it("uses AGENT_MAX_DAILY_RUNS env var for dailyLimit", () => {
     const orig = process.env.AGENT_MAX_DAILY_RUNS;
     try {
@@ -424,5 +454,12 @@ describe("generateDashboardHTML", () => {
     assert.ok(html.includes("renderGauges"));
     assert.ok(html.includes("renderAgents"));
     assert.ok(html.includes("renderHistory"));
+  });
+
+  it("includes duration bar CSS and rendering", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("duration-bar"), "HTML should include duration-bar class");
+    assert.ok(html.includes("duration-text"), "HTML should include duration-text class");
+    assert.ok(html.includes("durationMs"), "renderHistory should reference durationMs");
   });
 });
