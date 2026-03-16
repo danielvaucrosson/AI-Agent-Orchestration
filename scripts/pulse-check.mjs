@@ -128,3 +128,47 @@ export function diagnose(classification, runnerStatus, logSummary) {
   if (logSummary) return "log-errors";
   return "no-errors";
 }
+
+/**
+ * Decide what recovery action to take for a stuck run.
+ * @param {"runner-offline"|"transient"|"log-errors"|"no-errors"} diagnosis
+ * @param {{ seenCount: number, investigationDispatched: boolean }} runState
+ * @param {number} budgetCount - retryBudget[issueId].count
+ * @param {boolean} isPulseCheck - true if this is a PULSE-CHECK investigator run
+ * @returns {{ action: "wait"|"cancel-requeue"|"halt-incident"|"investigate", level?: number }}
+ */
+export function decideAction(diagnosis, runState, budgetCount, isPulseCheck = false) {
+  // Stuck PULSE-CHECK investigator → immediate Level 3
+  if (isPulseCheck) {
+    return { action: "halt-incident", level: 3 };
+  }
+
+  // Level 3: budget exhausted
+  if (budgetCount >= MAX_PULSE_RETRIES) {
+    return { action: "halt-incident", level: 3 };
+  }
+
+  const level = budgetCount === 0 ? 1 : 2;
+
+  // Level 2: always cancel-requeue regardless of diagnosis
+  if (level === 2) {
+    return { action: "cancel-requeue", level: 2 };
+  }
+
+  // Level 1 decision tree
+  if (diagnosis === "runner-offline" || diagnosis === "log-errors") {
+    return { action: "cancel-requeue", level: 1 };
+  }
+
+  // No errors: check observation count for force-cancel
+  if (runState.seenCount >= MAX_STUCK_OBSERVATIONS) {
+    return { action: "cancel-requeue", level: 1 };
+  }
+
+  // Dispatch Claude investigation after 2 observations with no errors
+  if (diagnosis === "no-errors" && runState.seenCount >= 2 && !runState.investigationDispatched) {
+    return { action: "investigate" };
+  }
+
+  return { action: "wait" };
+}

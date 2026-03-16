@@ -10,6 +10,7 @@ import {
   extractIssueFromRun,
   isPulseCheckRun,
   diagnose,
+  decideAction,
 } from "../scripts/pulse-check.mjs";
 
 describe("classifyRun", () => {
@@ -287,5 +288,62 @@ describe("diagnose", () => {
 
   it("returns runner-offline for stuck-running with offline runner", () => {
     assert.equal(diagnose("stuck-running", { online: false }, "Error: timeout"), "runner-offline");
+  });
+});
+
+describe("decideAction", () => {
+  it("returns cancel-requeue Level 1 for runner-offline (budget 0)", () => {
+    const result = decideAction("runner-offline", { seenCount: 1, investigationDispatched: false }, 0);
+    assert.deepEqual(result, { action: "cancel-requeue", level: 1 });
+  });
+
+  it("returns wait for transient diagnosis", () => {
+    const result = decideAction("transient", { seenCount: 1, investigationDispatched: false }, 0);
+    assert.deepEqual(result, { action: "wait" });
+  });
+
+  it("returns cancel-requeue Level 1 for log-errors (budget 0)", () => {
+    const result = decideAction("log-errors", { seenCount: 1, investigationDispatched: false }, 0);
+    assert.deepEqual(result, { action: "cancel-requeue", level: 1 });
+  });
+
+  it("returns wait for no-errors with low seenCount", () => {
+    const result = decideAction("no-errors", { seenCount: 1, investigationDispatched: false }, 0);
+    assert.deepEqual(result, { action: "wait" });
+  });
+
+  it("returns cancel-requeue Level 1 when seenCount hits MAX_STUCK_OBSERVATIONS (3)", () => {
+    const result = decideAction("no-errors", { seenCount: 3, investigationDispatched: false }, 0);
+    assert.deepEqual(result, { action: "cancel-requeue", level: 1 });
+  });
+
+  it("returns cancel-requeue Level 2 when budget count is 1 (regardless of diagnosis)", () => {
+    const result = decideAction("no-errors", { seenCount: 1, investigationDispatched: false }, 1);
+    assert.deepEqual(result, { action: "cancel-requeue", level: 2 });
+  });
+
+  it("returns cancel-requeue Level 2 even for transient diagnosis (force-cancel)", () => {
+    const result = decideAction("transient", { seenCount: 1, investigationDispatched: false }, 1);
+    assert.deepEqual(result, { action: "cancel-requeue", level: 2 });
+  });
+
+  it("returns halt-incident Level 3 when budget count is 2+", () => {
+    const result = decideAction("no-errors", { seenCount: 1, investigationDispatched: false }, 2);
+    assert.deepEqual(result, { action: "halt-incident", level: 3 });
+  });
+
+  it("returns investigate for no-errors + seenCount 2 + not dispatched yet", () => {
+    const result = decideAction("no-errors", { seenCount: 2, investigationDispatched: false }, 0);
+    assert.deepEqual(result, { action: "investigate" });
+  });
+
+  it("returns wait (skip investigation) if already dispatched", () => {
+    const result = decideAction("no-errors", { seenCount: 2, investigationDispatched: true }, 0);
+    assert.deepEqual(result, { action: "wait" });
+  });
+
+  it("returns halt-incident Level 3 immediately for PULSE-CHECK runs", () => {
+    const result = decideAction("no-errors", { seenCount: 1, investigationDispatched: false }, 0, true);
+    assert.deepEqual(result, { action: "halt-incident", level: 3 });
   });
 });
