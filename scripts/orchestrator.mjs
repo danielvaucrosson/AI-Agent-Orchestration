@@ -63,8 +63,18 @@ export function validateSubtaskDefs(defs) {
 // --- Stubs for functions implemented in later tasks ---
 // These will be replaced with full implementations in subsequent tasks.
 
-/** @todo Implemented in Task 2 */
-export function buildBranchName() { throw new Error('Not yet implemented'); }
+/**
+ * Build a branch name for a subtask.
+ * @param {string} parentIssueId - Parent issue identifier (e.g., 'DVA-18')
+ * @param {string} suffix - Branch suffix from subtask def
+ * @param {number} [index=0] - Subtask index (0=a, 1=b, etc.)
+ * @returns {string} Branch name like 'feature/DVA-18a-api-client'
+ */
+export function buildBranchName(parentIssueId, suffix, index = 0) {
+  const letter = String.fromCharCode(97 + index); // a, b, c, ...
+  const sanitized = suffix.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  return `feature/${parentIssueId}${letter}-${sanitized}`;
+}
 
 /** @todo Implemented in Task 3 */
 export async function createSubIssues() { throw new Error('Not yet implemented'); }

@@ -94,3 +94,24 @@ describe('validateSubtaskDefs', () => {
     assert.equal(result[1].labels, undefined);
   });
 });
+
+describe('buildBranchName', () => {
+  it('builds branch name from parent issue ID and suffix', () => {
+    const result = buildBranchName('DVA-18', 'api-client');
+    assert.equal(result, 'feature/DVA-18a-api-client');
+  });
+
+  it('assigns sequential letters for each subtask index', () => {
+    assert.equal(buildBranchName('DVA-18', 'first', 0), 'feature/DVA-18a-first');
+    assert.equal(buildBranchName('DVA-18', 'second', 1), 'feature/DVA-18b-second');
+    assert.equal(buildBranchName('DVA-18', 'third', 2), 'feature/DVA-18c-third');
+  });
+
+  it('preserves the case of the issue ID', () => {
+    assert.equal(buildBranchName('DVA-18', 'task', 0), 'feature/DVA-18a-task');
+  });
+
+  it('sanitizes suffix (replaces spaces and special chars)', () => {
+    assert.equal(buildBranchName('DVA-18', 'my cool task!', 0), 'feature/DVA-18a-my-cool-task-');
+  });
+});
