@@ -582,3 +582,43 @@ describe("renderDashboard — web URL option", () => {
     assert.ok(!output.includes("Web: http"), "CLI output should not have Web: link without webUrl");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Duration Bars Tests
+// ---------------------------------------------------------------------------
+
+describe("duration bars — durationMs in buildDashboardData history", () => {
+  it("computes durationMs from run timestamps", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+
+    for (const entry of data.history) {
+      assert.ok("durationMs" in entry, "history entry should have durationMs field");
+      assert.ok(typeof entry.durationMs === "number", "durationMs should be a number");
+      assert.ok(entry.durationMs >= 0, "durationMs should be non-negative");
+    }
+  });
+});
+
+describe("duration bars — static HTML includes bar markup", () => {
+  it("generateStaticHTML includes duration-bar CSS class", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(html.includes("duration-bar"), "Static HTML should include duration-bar CSS class");
+    assert.ok(html.includes("duration-text"), "Static HTML should include duration-text CSS class");
+  });
+
+  it("generateStaticHTML renderHistory references durationMs", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(html.includes("durationMs"), "Static renderHistory should use durationMs for bar width");
+  });
+});

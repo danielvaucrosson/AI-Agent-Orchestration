@@ -249,7 +249,13 @@ export function generateStaticHTML(data) {
   .pr-link { color: #58a6ff; text-decoration: none; }
   .pr-link:hover { text-decoration: underline; }
   .pr-none { color: #8b949e; }
-  .duration { font-family: 'Cascadia Code', 'Fira Code', monospace; color: #ffd54f; }
+  .duration { font-family: 'Cascadia Code', 'Fira Code', monospace; color: #ffd54f; position: relative; }
+  .duration-bar {
+    position: absolute; top: 4px; left: 0; bottom: 4px;
+    background: rgba(255, 213, 79, 0.15); border-radius: 3px;
+    pointer-events: none;
+  }
+  .duration-text { position: relative; z-index: 1; }
   .when { color: #8b949e; }
   .check { font-size: 16px; }
   .footer { color: #8b949e; font-size: 12px; padding-top: 16px; border-top: 1px solid #21262d; }
@@ -324,6 +330,7 @@ function renderAgents(agents) {
 
 function renderHistory(history) {
   if (!history.length) return '<div class="empty-state">No agent runs yet</div>';
+  var maxMs = Math.max.apply(null, history.map(function(h) { return h.durationMs || 0; }).concat([1]));
   var rows = history.map(function(h) {
     var statusIcon = h.success
       ? '<span class="check status-success">&#10003;</span> <span class="status-success">Success</span>'
@@ -331,9 +338,10 @@ function renderHistory(history) {
     var prCell = h.prNumber
       ? '<a class="pr-link" href="' + escapeHtml(h.prUrl) + '" target="_blank">#' + h.prNumber + '</a>'
       : '<span class="pr-none">&mdash;</span>';
+    var pct = maxMs > 0 ? Math.round(((h.durationMs || 0) / maxMs) * 100) : 0;
     return '<tr><td>' + statusIcon + '</td><td class="issue-link">' + escapeHtml(h.issueId) + '</td>'
       + '<td>' + escapeHtml(h.issueTitle) + '</td><td>' + prCell + '</td>'
-      + '<td class="duration">' + escapeHtml(h.duration) + '</td>'
+      + '<td class="duration"><div class="duration-bar" style="width:' + pct + '%"></div><span class="duration-text">' + escapeHtml(h.duration) + '</span></td>'
       + '<td class="when">' + escapeHtml(h.when) + '</td></tr>';
   }).join('');
   return '<table><thead><tr><th>Status</th><th>Issue</th><th>Title</th><th>PR</th><th>Duration</th><th>When</th></tr></thead><tbody>' + rows + '</tbody></table>';

@@ -244,16 +244,19 @@ export function buildDashboardData(raw) {
   const history = completed.slice(0, MAX_HISTORY).map((run) => {
     const { issueId, issueTitle } = extractRunInfo(run);
     const prInfo = prMap.get(run.id);
+    const startTs = run.run_started_at || run.created_at;
+    const endTs = run.updated_at;
+    const rawMs = startTs && endTs
+      ? new Date(endTs).getTime() - new Date(startTs).getTime()
+      : 0;
     return {
       issueId,
       issueTitle,
       success: run.conclusion === "success",
       prNumber: prInfo?.number || null,
       prUrl: prInfo ? `${REPO_URL}/pull/${prInfo.number}` : null,
-      duration: formatCompletedDuration(
-        run.run_started_at || run.created_at,
-        run.updated_at
-      ),
+      duration: formatCompletedDuration(startTs, endTs),
+      durationMs: rawMs > 0 ? rawMs : 0,
       when: formatRelativeTime(run.updated_at),
       updatedAt: run.updated_at,
     };
@@ -474,7 +477,13 @@ export function generateDashboardHTML() {
   .pr-link { color: #58a6ff; text-decoration: none; }
   .pr-link:hover { text-decoration: underline; }
   .pr-none { color: #8b949e; }
-  .duration { font-family: 'Cascadia Code', 'Fira Code', monospace; color: #ffd54f; }
+  .duration { font-family: 'Cascadia Code', 'Fira Code', monospace; color: #ffd54f; position: relative; }
+  .duration-bar {
+    position: absolute; top: 4px; left: 0; bottom: 4px;
+    background: rgba(255, 213, 79, 0.15); border-radius: 3px;
+    pointer-events: none;
+  }
+  .duration-text { position: relative; z-index: 1; }
   .when { color: #8b949e; }
   .check { font-size: 16px; }
 </style>
@@ -558,6 +567,7 @@ function renderAgents(agents) {
 
 function renderHistory(history) {
   if (!history.length) return '<div class="empty-state">No recent runs</div>';
+  const maxMs = Math.max(...history.map(h => h.durationMs || 0), 1);
   const rows = history.map(h => {
     const statusIcon = h.success
       ? '<span class="check status-success">&#10003;</span> <span class="status-success">Success</span>'
@@ -565,13 +575,14 @@ function renderHistory(history) {
     const prCell = h.prNumber
       ? \`<a class="pr-link" href="\${escapeHtml(h.prUrl)}" target="_blank">#\${h.prNumber}</a>\`
       : '<span class="pr-none">&mdash;</span>';
+    const pct = maxMs > 0 ? Math.round(((h.durationMs || 0) / maxMs) * 100) : 0;
     return \`
       <tr>
         <td>\${statusIcon}</td>
         <td class="issue-link">\${escapeHtml(h.issueId)}</td>
         <td>\${escapeHtml(h.issueTitle)}</td>
         <td>\${prCell}</td>
-        <td class="duration">\${escapeHtml(h.duration)}</td>
+        <td class="duration"><div class="duration-bar" style="width:\${pct}%"></div><span class="duration-text">\${escapeHtml(h.duration)}</span></td>
         <td class="when">\${escapeHtml(h.when)}</td>
       </tr>
     \`;
