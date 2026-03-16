@@ -16,6 +16,8 @@ import { LinearClient } from '@linear/sdk';
 import { execSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
+const defaultRunGit = (cmd) => execSync(`git ${cmd}`, { encoding: 'utf8' }).trim();
+
 /**
  * Parse subtask definitions from JSON string or array.
  * @param {string|Array} input - JSON string or array of subtask defs
@@ -115,11 +117,46 @@ export async function createSubIssues(parentIdentifier, subtasks, deps = {}) {
   return results;
 }
 
-/** @todo Implemented in Task 4 */
-export async function createSubBranches() { throw new Error('Not yet implemented'); }
+/**
+ * Create git branches for each subtask.
+ * @param {string} baseBranch - Branch to create from (e.g., 'main')
+ * @param {string} parentIssueId - Parent issue identifier
+ * @param {Array} subtasks - Subtask definitions
+ * @param {Object} [deps] - Injected dependencies
+ * @returns {string[]} Created branch names
+ */
+export function createSubBranches(baseBranch, parentIssueId, subtasks, deps = {}) {
+  const runGit = deps.runGit || defaultRunGit;
+  const branches = [];
 
-/** @todo Implemented in Task 4 */
-export async function discoverSubBranches() { throw new Error('Not yet implemented'); }
+  for (let i = 0; i < subtasks.length; i++) {
+    const branchName = buildBranchName(parentIssueId, subtasks[i].branchSuffix, i);
+    runGit(`checkout -b ${branchName} ${baseBranch}`);
+    branches.push(branchName);
+  }
+
+  runGit(`checkout ${baseBranch}`);
+  return branches;
+}
+
+/**
+ * Discover existing sub-branches for a parent issue.
+ * @param {string} parentIssueId - Parent issue identifier (e.g., 'DVA-18')
+ * @param {Object} [deps] - Injected dependencies
+ * @returns {string[]} Branch names matching the pattern
+ */
+export function discoverSubBranches(parentIssueId, deps = {}) {
+  const runGit = deps.runGit || defaultRunGit;
+  const output = runGit('branch -a');
+  const escaped = parentIssueId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^feature/${escaped}[a-z]-`);
+
+  return output
+    .split('\n')
+    .map(line => line.trim().replace(/^(?:remotes\/)?origin\//, ''))
+    .filter(name => pattern.test(name))
+    .filter((name, i, arr) => arr.indexOf(name) === i); // dedupe
+}
 
 /** @todo Implemented in Task 5 */
 export async function checkProgress() { throw new Error('Not yet implemented'); }

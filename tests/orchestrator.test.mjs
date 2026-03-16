@@ -198,3 +198,71 @@ describe('createSubIssues', () => {
     assert.equal(result[0].branchName, 'feature/DVA-18a-a');
   });
 });
+
+describe('createSubBranches', () => {
+  it('creates a git branch for each subtask from the base branch', () => {
+    const commands = [];
+    const mockDeps = {
+      runGit: (cmd) => { commands.push(cmd); return ''; },
+    };
+
+    const subtasks = [
+      { title: 'A', description: 'D', branchSuffix: 'api' },
+      { title: 'B', description: 'D', branchSuffix: 'db' },
+    ];
+
+    const result = createSubBranches('main', 'DVA-18', subtasks, mockDeps);
+
+    assert.equal(result.length, 2);
+    assert.equal(result[0], 'feature/DVA-18a-api');
+    assert.equal(result[1], 'feature/DVA-18b-db');
+    assert.ok(commands.some(c => c.includes('checkout -b feature/DVA-18a-api')));
+    assert.ok(commands.some(c => c.includes('checkout -b feature/DVA-18b-db')));
+    // Should return to base branch after creating all
+    assert.equal(commands[commands.length - 1], 'checkout main');
+  });
+});
+
+describe('discoverSubBranches', () => {
+  it('finds branches matching the parent issue pattern', () => {
+    const mockDeps = {
+      runGit: (cmd) => {
+        if (cmd.includes('branch -a')) {
+          return [
+            '  origin/feature/DVA-18a-api',
+            '  origin/feature/DVA-18b-db',
+            '  origin/feature/DVA-19-unrelated',
+            '  origin/main',
+          ].join('\n');
+        }
+        return '';
+      },
+    };
+
+    const result = discoverSubBranches('DVA-18', mockDeps);
+    assert.equal(result.length, 2);
+    assert.ok(result.includes('feature/DVA-18a-api'));
+    assert.ok(result.includes('feature/DVA-18b-db'));
+  });
+
+  it('returns empty array when no sub-branches exist', () => {
+    const mockDeps = {
+      runGit: () => '  origin/main\n  origin/feature/DVA-19-other',
+    };
+    const result = discoverSubBranches('DVA-18', mockDeps);
+    assert.equal(result.length, 0);
+  });
+
+  it('does not match issues with longer numeric suffixes (e.g., DVA-180)', () => {
+    const mockDeps = {
+      runGit: () => [
+        '  origin/feature/DVA-18a-api',
+        '  origin/feature/DVA-180a-something',
+        '  origin/feature/DVA-181b-other',
+      ].join('\n'),
+    };
+    const result = discoverSubBranches('DVA-18', mockDeps);
+    assert.equal(result.length, 1);
+    assert.equal(result[0], 'feature/DVA-18a-api');
+  });
+});
