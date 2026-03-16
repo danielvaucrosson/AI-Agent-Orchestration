@@ -163,6 +163,26 @@ Agent sessions are automatically logged by `PreToolUse` and `PostToolUse` hooks.
 - **PR attachment:** Run `node scripts/audit.mjs attach <pr-number>` after creating a PR to post the audit trail as a collapsible comment
 - **Session lifecycle:** Logs are cleared when you run `init` or `clear`. The stop hook will remind you to export before finishing.
 
+## Orchestration
+
+Before choosing how to execute multi-step work, consult `docs/superpowers/orchestration-decision-framework.md`. Default to the simplest approach (Level 0: just do it) and only escalate when tasks are genuinely independent or require team visibility.
+
+**Orchestrator** (`scripts/orchestrator.mjs`) — multi-agent task decomposition:
+```bash
+node scripts/orchestrator.mjs create-subtasks DVA-18 '[...]'  # Create sub-issues + branches
+node scripts/orchestrator.mjs status DVA-18                    # Check sub-task progress
+node scripts/orchestrator.mjs merge DVA-18 --into main         # Merge completed branches
+node scripts/orchestrator.mjs recover DVA-18                   # Recovery plan for failures
+```
+
+The lead agent can also use Linear MCP tools directly for sub-issue creation and monitoring.
+
+**Review protocol:** Each sub-task must pass a two-stage review before its branch is merged:
+1. **Spec compliance** — does the implementation match requirements?
+2. **Code quality** — is the code well-structured, tested, and maintainable?
+
+Worker agents should run `node scripts/pre-pr-review.mjs` on their sub-task branch before marking the sub-issue as Done.
+
 ## Environment
 
 - Run `npm install` before using Linear CLI scripts
