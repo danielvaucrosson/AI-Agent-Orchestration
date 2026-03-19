@@ -10,15 +10,35 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const PROJECT_ROOT = join(__dirname, "..", "..");
+const LOCAL_ROOT = join(__dirname, "..", "..");
 
-// Marker file created when the review passes
-const REVIEW_MARKER = join(PROJECT_ROOT, ".claude", "audit", "_review-passed.marker");
+// Resolve the main repo root (works in both normal repos and worktrees).
+// In a worktree, __dirname points to the worktree copy but the marker may
+// have been written to the main repo's .claude/audit/ directory.
+let GIT_ROOT;
+try {
+  GIT_ROOT = execSync("git rev-parse --show-toplevel", {
+    encoding: "utf-8",
+    cwd: LOCAL_ROOT,
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
+} catch {
+  GIT_ROOT = LOCAL_ROOT;
+}
+
+// Check both the local root (worktree or repo) and the git root (main repo)
+// since the marker could have been written to either location.
+const MARKER_NAME = join(".claude", "audit", "_review-passed.marker");
+const MARKER_PATHS = [
+  join(LOCAL_ROOT, MARKER_NAME),
+  ...(GIT_ROOT !== LOCAL_ROOT ? [join(GIT_ROOT, MARKER_NAME)] : []),
+];
 
 // Patterns that indicate PR creation commands.
 // Anchored so `gh` must be at command start or after a separator (&&, ||, ;, |)
@@ -62,21 +82,23 @@ try {
     process.exit(0);
   }
 
-  // Check if the review has already been run and passed
-  if (existsSync(REVIEW_MARKER)) {
-    // Read the marker to check timestamp (stale after 30 minutes)
-    try {
-      const markerContent = readFileSync(REVIEW_MARKER, "utf-8").trim();
-      const markerTime = new Date(markerContent);
-      const now = new Date();
-      const ageMinutes = (now - markerTime) / (1000 * 60);
+  // Check if the review has already been run and passed.
+  // Look in both the local root and the main repo root (for worktrees).
+  for (const markerPath of MARKER_PATHS) {
+    if (existsSync(markerPath)) {
+      try {
+        const markerContent = readFileSync(markerPath, "utf-8").trim();
+        const markerTime = new Date(markerContent);
+        const now = new Date();
+        const ageMinutes = (now - markerTime) / (1000 * 60);
 
-      if (ageMinutes < 30) {
-        // Review is recent — allow PR creation
-        process.exit(0);
+        if (ageMinutes < 30) {
+          // Review is recent — allow PR creation
+          process.exit(0);
+        }
+      } catch {
+        // Marker exists but can't be read — try next path
       }
-    } catch {
-      // Marker exists but can't be read — proceed with reminder
     }
   }
 
