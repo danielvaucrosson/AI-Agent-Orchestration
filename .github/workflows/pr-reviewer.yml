@@ -1,0 +1,190 @@
+name: PR Reviewer Agent
+run-name: "PR Reviewer: #${{ inputs.pr_number || 'all' }}"
+
+# Triggered when:
+# 1. A new PR is opened from an agent branch
+# 2. An agent pushes updates to a PR (synchronize)
+# 3. Manual dispatch for a specific PR or all agent PRs
+# 4. Post-merge verification after a PR is merged
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to review (leave empty for all open agent PRs)"
+        required: false
+        type: string
+      mode:
+        description: "Review mode"
+        required: false
+        default: "review"
+        type: choice
+        options:
+          - review
+          - post-merge
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-reviewer-${{ github.event.pull_request.number || inputs.pr_number || 'all' }}
+  cancel-in-progress: true
+
+jobs:
+  # Gate: only review PRs from agent branches
+  should-review:
+    runs-on: ubuntu-latest
+    if: ${{ vars.LINEAR_ENABLED != 'false' }}
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+      pr_number: ${{ steps.check.outputs.pr_number }}
+      mode: ${{ steps.check.outputs.mode }}
+    steps:
+      - name: Determine review target
+        id: check
+        uses: actions/github-script@v8
+        with:
+          script: |
+            let shouldRun = false;
+            let prNumber = '';
+            let mode = 'review';
+
+            if (context.eventName === 'workflow_dispatch') {
+              shouldRun = true;
+              prNumber = '${{ inputs.pr_number }}' || '';
+              mode = '${{ inputs.mode }}' || 'review';
+              core.info(`Manual dispatch: PR=${prNumber || 'all'}, mode=${mode}`);
+            }
+
+            if (context.eventName === 'pull_request') {
+              const branch = context.payload.pull_request.head.ref;
+              const agentBranchRe = /^(feature|fix)\/(DVA-\d+)/;
+
+              if (agentBranchRe.test(branch)) {
+                shouldRun = true;
+                prNumber = context.payload.pull_request.number.toString();
+                core.info(`Agent PR detected: #${prNumber} from ${branch}`);
+              } else {
+                core.info(`Skipping: branch ${branch} is not an agent branch`);
+              }
+            }
+
+            core.setOutput('should_run', shouldRun.toString());
+            core.setOutput('pr_number', prNumber);
+            core.setOutput('mode', mode);
+
+  review:
+    needs: should-review
+    if: needs.should-review.outputs.should_run == 'true' && needs.should-review.outputs.mode == 'review'
+    runs-on: self-hosted
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_WITH_WORKFLOW }}
+
+      - name: Checkout PR branch
+        if: needs.should-review.outputs.pr_number != ''
+        run: |
+          PR_NUM="${{ needs.should-review.outputs.pr_number }}"
+          PR_DATA=$(gh pr view "$PR_NUM" --json headRefName --jq '.headRefName')
+          git checkout "$PR_DATA"
+          git pull origin "$PR_DATA"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Review PR
+        id: review
+        run: |
+          PR_NUM="${{ needs.should-review.outputs.pr_number }}"
+          if [ -n "$PR_NUM" ]; then
+            RESULT=$(node scripts/pr-reviewer.mjs review --pr "$PR_NUM")
+          else
+            RESULT=$(node scripts/pr-reviewer.mjs review-all)
+          fi
+          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
+          echo "$RESULT"
+
+          # Parse action for downstream steps
+          ACTION=$(echo "$RESULT" | jq -r '.action // .[0].action // "unknown"')
+          echo "action=$ACTION" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.PAT_WITH_WORKFLOW }}
+          GITHUB_TOKEN: ${{ secrets.PAT_WITH_WORKFLOW }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+
+      - name: Job summary
+        if: always()
+        run: |
+          ACTION="${{ steps.review.outputs.action }}"
+          PR_NUM="${{ needs.should-review.outputs.pr_number }}"
+
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## PR Reviewer Agent
+
+          | Field | Value |
+          |-------|-------|
+          | PR | #${PR_NUM:-all} |
+          | Action | ${ACTION:-unknown} |
+          | Time | $(date -u +%Y-%m-%dT%H:%M:%SZ) |
+          EOF
+
+  post-merge:
+    needs: should-review
+    if: needs.should-review.outputs.should_run == 'true' && needs.should-review.outputs.mode == 'post-merge'
+    runs-on: self-hosted
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PAT_WITH_WORKFLOW }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Post-merge verification
+        id: verify
+        run: |
+          PR_NUM="${{ needs.should-review.outputs.pr_number }}"
+          if [ -z "$PR_NUM" ]; then
+            echo "Error: --pr number required for post-merge mode"
+            exit 1
+          fi
+          node scripts/pr-reviewer.mjs post-merge --pr "$PR_NUM"
+        env:
+          GH_TOKEN: ${{ secrets.PAT_WITH_WORKFLOW }}
+          GITHUB_TOKEN: ${{ secrets.PAT_WITH_WORKFLOW }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+
+      - name: Job summary
+        if: always()
+        run: |
+          PR_NUM="${{ needs.should-review.outputs.pr_number }}"
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Post-merge Verification
+
+          | Field | Value |
+          |-------|-------|
+          | PR | #${PR_NUM} |
+          | Time | $(date -u +%Y-%m-%dT%H:%M:%SZ) |
+          | Outcome | ${{ steps.verify.outcome }} |
+          EOF
