@@ -290,11 +290,27 @@ describe("pre-pr-check hook", () => {
     assert.ok(parsed.reason.includes("Pre-PR review"));
   });
 
-  it("allows gh pr create with --force flag", () => {
+  it("allows gh pr create with SKIP_PR_REVIEW=1 env var", () => {
+    const output = runHook({
+      tool_name: "Bash",
+      tool_input: { command: 'SKIP_PR_REVIEW=1 gh pr create --title "test"' },
+    });
+    assert.equal(output, "");
+  });
+
+  it("blocks gh pr create with --force flag (not a valid bypass)", () => {
+    // --force is not a valid gh pr create flag and should NOT bypass the hook.
+    // This was the bug fixed in DVA-64.
+    const markerPath = join(PROJECT_ROOT, ".claude", "audit", "_review-passed.marker");
+    cleanFixture(markerPath);
+
     const output = runHook({
       tool_name: "Bash",
       tool_input: { command: 'gh pr create --title "test" --force' },
     });
-    assert.equal(output, "");
+
+    assert.ok(output.length > 0, "Hook should block --force");
+    const parsed = JSON.parse(output);
+    assert.equal(parsed.decision, "block");
   });
 });

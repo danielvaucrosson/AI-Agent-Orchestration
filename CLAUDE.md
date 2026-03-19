@@ -145,7 +145,7 @@ node scripts/pre-pr-review.mjs --help              # Show usage
 **PreToolUse hook** (`.claude/hooks/pre-pr-check.mjs`):
 - Automatically intercepts `gh pr create` commands
 - Blocks PR creation if no review has passed in the last 30 minutes
-- Bypass with `--force` or `--skip-review` flag on the `gh pr create` command
+- Bypass with env var prefix: `SKIP_PR_REVIEW=1 gh pr create ...`
 
 ### What the GitHub Action Handles (do NOT duplicate)
 
