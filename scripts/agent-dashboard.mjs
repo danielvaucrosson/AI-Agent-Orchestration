@@ -685,13 +685,19 @@ export function renderDashboard(data, opts = {}) {
     lines.push(`${C.cyan}RUNNER HEALTH${C.reset}`);
     lines.push("");
 
-    // Runner status
-    const statusColor = health.runner.status === "online" ? C.green
-      : health.runner.status === "busy" ? C.yellow
-      : health.runner.status === "offline" ? C.red : C.dim;
-    lines.push(
-      `  Runner:         ${statusColor}${C.bold}${health.runner.status.toUpperCase()}${C.reset}`
-    );
+    // Runner status (hide when unavailable due to token scope)
+    if (health.runner.status !== "unknown") {
+      const statusColor = health.runner.status === "online" ? C.green
+        : health.runner.status === "busy" ? C.yellow
+        : health.runner.status === "offline" ? C.red : C.dim;
+      lines.push(
+        `  Runner:         ${statusColor}${C.bold}${health.runner.status.toUpperCase()}${C.reset}`
+      );
+    } else {
+      lines.push(
+        `  Runner:         ${C.dim}(unavailable — needs admin token scope)${C.reset}`
+      );
+    }
 
     // Quota trend
     const trendArrow = health.quotaTrend.trend === "up" ? `${C.red}\u2191${C.reset}`
@@ -1202,14 +1208,21 @@ function renderRunnerHealth(h) {
     : h.daysSinceIncident.days === 0 ? 'TODAY' : String(h.daysSinceIncident.days);
   const incidentColor = h.daysSinceIncident.days === null ? 'status-online'
     : h.daysSinceIncident.days === 0 ? 'status-offline' : 'status-online';
+  const runnerCard = h.runner.status !== 'unknown'
+    ? \`<div class="health-card">
+          <div class="health-value \${statusColor}">\${escapeHtml(h.runner.status.toUpperCase())}</div>
+          <div class="health-label">Runner</div>
+        </div>\`
+    : \`<div class="health-card">
+          <div class="health-value status-unknown">N/A</div>
+          <div class="health-label">Runner</div>
+          <div class="health-sub">needs admin token</div>
+        </div>\`;
   return \`
     <div class="runner-health">
       <div class="section-label">Runner Health</div>
       <div class="health-cards">
-        <div class="health-card">
-          <div class="health-value \${statusColor}">\${escapeHtml(h.runner.status.toUpperCase())}</div>
-          <div class="health-label">Runner</div>
-        </div>
+        \${runnerCard}
         <div class="health-card">
           <div class="health-value" style="color:#d29922">\${h.quotaTrend.today}\${quotaTrend}</div>
           <div class="health-label">Quota (24h)</div>

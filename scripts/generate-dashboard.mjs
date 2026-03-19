@@ -482,8 +482,11 @@ function renderRunnerHealth(h) {
     : h.daysSinceIncident.days === 0 ? 'TODAY' : String(h.daysSinceIncident.days);
   var incidentColor = h.daysSinceIncident.days === null ? 'status-online'
     : h.daysSinceIncident.days === 0 ? 'status-offline' : 'status-online';
+  var runnerCard = h.runner.status !== 'unknown'
+    ? '<div class="health-card"><div class="health-value ' + statusColor + '">' + escapeHtml(h.runner.status.toUpperCase()) + '</div><div class="health-label">Runner</div></div>'
+    : '<div class="health-card"><div class="health-value status-unknown">N/A</div><div class="health-label">Runner</div><div class="health-sub">needs admin token</div></div>';
   return '<div class="runner-health"><div class="section-label">Runner Health</div><div class="health-cards">'
-    + '<div class="health-card"><div class="health-value ' + statusColor + '">' + escapeHtml(h.runner.status.toUpperCase()) + '</div><div class="health-label">Runner</div></div>'
+    + runnerCard
     + '<div class="health-card"><div class="health-value" style="color:#d29922">' + h.quotaTrend.today + quotaTrend + '</div><div class="health-label">Quota (24h)</div><div class="health-sub">yesterday: ' + h.quotaTrend.yesterday + '</div></div>'
     + '<div class="health-card"><div class="health-value" style="color:#ffd54f">' + escapeHtml(h.avgDuration.avgFormatted) + '</div><div class="health-label">Avg Duration</div><div class="health-sub">' + h.avgDuration.sampleSize + ' runs (7d)</div></div>'
     + '<div class="health-card"><div class="health-value ' + rateColor + '">' + h.successRate.rate + '%' + rateTrend + '</div><div class="health-label">Success Rate</div><div class="health-sub">' + h.successRate.currentWindow.succeeded + '/' + h.successRate.currentWindow.total + ' (7d)</div></div>'
