@@ -122,8 +122,12 @@ jobs:
           echo "RESULT_EOF" >> "$GITHUB_OUTPUT"
 
           # Parse action using Node.js (no jq dependency)
+          # RESULT may contain log lines before the JSON — extract the JSON portion
           ACTION=$(node -e "
-            const r = JSON.parse(process.argv[1]);
+            const input = process.argv[1];
+            const jsonMatch = input.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+            if (!jsonMatch) { console.log('unknown'); process.exit(0); }
+            const r = JSON.parse(jsonMatch[1]);
             console.log(r.action || (Array.isArray(r) && r[0] && r[0].action) || 'unknown');
           " "$RESULT")
           echo "action=$ACTION" >> "$GITHUB_OUTPUT"
