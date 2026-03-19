@@ -47,7 +47,7 @@ jobs:
           echo "end_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_WITH_WORKFLOW }}
 
       - name: Auto-merge PR
         if: success() && vars.AGENT_AUTO_MERGE == 'true'
