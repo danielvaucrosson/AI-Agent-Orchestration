@@ -312,7 +312,7 @@ export function escalatePR(prNumber, issueId, deps) {
 /**
  * Update Linear issue with a label or comment.
  */
-export function updateLinearIssue(issueId, action, details, execFn) {
+export async function updateLinearIssue(issueId, action, details, execFn) {
   if (!issueId) return;
   const run = execFn || ((cmd) =>
     execSync(cmd, { encoding: "utf-8", cwd: PROJECT_ROOT }).trim()
@@ -325,8 +325,27 @@ export function updateLinearIssue(issueId, action, details, execFn) {
       );
     } else if (action === "approved") {
       run(
-        `node "${LINEAR_SCRIPT}" comment ${issueId} "PR reviewer approved and merged the PR. All pre-merge checks passed."`
+        `node "${LINEAR_SCRIPT}" comment ${issueId} "PR reviewer approved and merged the PR. All pre-merge checks passed. Label: agent-approved."`
       );
+      // Apply agent-approved label via Linear SDK
+      try {
+        const apiKey = process.env.LINEAR_API_KEY;
+        if (apiKey) {
+          const { LinearClient } = await import("@linear/sdk");
+          const client = new LinearClient({ apiKey });
+          const issue = await client.issue(issueId);
+          const labels = await issue.labels();
+          const existingIds = labels.nodes.map((l) => l.id);
+          // Find or skip the agent-approved label
+          const allLabels = await client.issueLabels({ filter: { name: { eq: "agent-approved" } } });
+          const label = allLabels.nodes[0];
+          if (label && !existingIds.includes(label.id)) {
+            await issue.update({ labelIds: [...existingIds, label.id] });
+          }
+        }
+      } catch (labelErr) {
+        console.error(`Warning: could not apply agent-approved label: ${labelErr.message}`);
+      }
     } else if (action === "post-merge-passed") {
       run(
         `node "${LINEAR_SCRIPT}" comment ${issueId} "Post-merge verification passed. All items verified.${details ? "\\n" + details : ""}"`
@@ -401,18 +420,41 @@ export function verifyPostMergeItem(text, deps) {
     }
   }
 
-  // Dashboard/UI verification — check that the expected page/component loads
+  // Dashboard/UI verification — check for recent successful dashboard deployment
   if (/\bdashboard\b/.test(lower)) {
-    return { verified: true, details: "Dashboard verification deferred to manual check" };
+    try {
+      const repo = process.env.GITHUB_REPOSITORY || "";
+      const runs = deps.checkWorkflowRuns
+        ? deps.checkWorkflowRuns("update-dashboard.yml")
+        : gh(`run list --workflow=update-dashboard.yml --limit 1 --json conclusion,createdAt --jq ".[0]"`, deps.exec);
+      const latest = JSON.parse(runs || "{}");
+      if (latest.conclusion === "success") {
+        return { verified: true, details: `Dashboard deployed successfully (${latest.createdAt})` };
+      }
+      return { verified: false, details: `Latest dashboard run: ${latest.conclusion || "no runs found"}` };
+    } catch (err) {
+      return { verified: false, details: `Dashboard check failed: ${err.message}` };
+    }
   }
 
-  // Workflow/scheduler verification
+  // Workflow/scheduler verification — check for recent successful runs
   if (/\bworkflow\b|\bscheduler\b|\bcron\b/.test(lower)) {
-    return { verified: true, details: "Workflow verification deferred to manual check" };
+    try {
+      const runs = deps.checkWorkflowRuns
+        ? deps.checkWorkflowRuns("agent-scheduler.yml")
+        : gh(`run list --workflow=agent-scheduler.yml --limit 1 --json conclusion,createdAt --jq ".[0]"`, deps.exec);
+      const latest = JSON.parse(runs || "{}");
+      if (latest.conclusion === "success") {
+        return { verified: true, details: `Scheduler ran successfully (${latest.createdAt})` };
+      }
+      return { verified: false, details: `Latest scheduler run: ${latest.conclusion || "no runs found"}` };
+    } catch (err) {
+      return { verified: false, details: `Workflow check failed: ${err.message}` };
+    }
   }
 
-  // Default: can't auto-verify, mark as needing manual check
-  return { verified: true, details: "Cannot auto-verify — deferred to manual check" };
+  // Default: can't auto-verify — flag for human review
+  return { verified: false, details: "Cannot auto-verify — needs manual check" };
 }
 
 /**
@@ -512,7 +554,10 @@ export function reviewPR(prNumber, deps) {
   if (validation.passed) {
     console.log(`PR #${prNumber} passed all checks — approving and merging`);
     const comment = buildReviewComment(validation, "approve");
-    requestChangesPR(prNumber, comment, { exec: execFn }); // Post the summary first
+    // Post approval summary as a regular comment (NOT via requestChangesPR,
+    // which would incorrectly add the agent-actionable label)
+    const escapedComment = comment.replace(/"/g, '\\"').replace(/`/g, '\\`');
+    gh(`pr comment ${prNumber} --body "${escapedComment}"`, execFn);
     approvePR(prNumber, { exec: execFn });
 
     // Update Linear

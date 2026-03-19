@@ -370,24 +370,37 @@ describe("verifyPostMergeItem", () => {
     assert.ok(result.details.includes("Tests failed"));
   });
 
-  it("defers dashboard verification to manual check", () => {
-    const deps = {};
+  it("verifies dashboard items via workflow run check", () => {
+    const deps = {
+      checkWorkflowRuns: () => JSON.stringify({ conclusion: "success", createdAt: "2026-03-19T00:00:00Z" }),
+    };
     const result = verifyPostMergeItem("Verify dashboard updates on next scheduler run", deps);
     assert.equal(result.verified, true);
-    assert.ok(result.details.includes("deferred"));
+    assert.ok(result.details.includes("deployed successfully"));
   });
 
-  it("defers workflow verification to manual check", () => {
-    const deps = {};
+  it("fails dashboard items when latest run failed", () => {
+    const deps = {
+      checkWorkflowRuns: () => JSON.stringify({ conclusion: "failure", createdAt: "2026-03-19T00:00:00Z" }),
+    };
+    const result = verifyPostMergeItem("Verify dashboard updates", deps);
+    assert.equal(result.verified, false);
+    assert.ok(result.details.includes("failure"));
+  });
+
+  it("verifies workflow items via scheduler run check", () => {
+    const deps = {
+      checkWorkflowRuns: () => JSON.stringify({ conclusion: "success", createdAt: "2026-03-19T00:00:00Z" }),
+    };
     const result = verifyPostMergeItem("Confirm no excessive workflow runs after 1 hour", deps);
     assert.equal(result.verified, true);
-    assert.ok(result.details.includes("deferred"));
+    assert.ok(result.details.includes("Scheduler ran successfully"));
   });
 
-  it("defers unknown items to manual check", () => {
+  it("fails unknown items that cannot be auto-verified", () => {
     const deps = {};
     const result = verifyPostMergeItem("Check something unusual", deps);
-    assert.equal(result.verified, true);
+    assert.equal(result.verified, false);
     assert.ok(result.details.includes("Cannot auto-verify"));
   });
 });
@@ -405,6 +418,7 @@ describe("runPostMergeVerification", () => {
         }
         return "{}";
       },
+      checkWorkflowRuns: () => JSON.stringify({ conclusion: "success", createdAt: "2026-03-19T00:00:00Z" }),
     };
 
     const result = runPostMergeVerification(42, deps);
