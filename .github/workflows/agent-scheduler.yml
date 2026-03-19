@@ -45,13 +45,17 @@ jobs:
 
       - name: Dispatch agent worker
         if: steps.select.outputs.task != 'none' && steps.select.outputs.task != ''
+        # Uses PAT instead of GITHUB_TOKEN so the Worker's workflow_run
+        # lifecycle events propagate to listeners (Update Dashboard, etc.).
+        # GITHUB_TOKEN would suppress downstream workflow_run events due to
+        # GitHub's anti-recursion mechanism (DVA-66).
         run: |
           gh workflow run agent-worker.yml \
             -f issue_id="${{ steps.select.outputs.task }}" \
             -f issue_title="${{ steps.select.outputs.task_title }}"
           echo "Dispatched agent-worker for ${{ steps.select.outputs.task }}"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_WITH_WORKFLOW }}
 
       - name: Post Linear notification
         if: steps.select.outputs.task != 'none' && steps.select.outputs.task != ''
