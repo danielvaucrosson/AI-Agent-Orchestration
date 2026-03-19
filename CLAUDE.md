@@ -39,7 +39,19 @@ When you receive a task referencing a Linear issue (e.g., DVA-5), or are asked t
    ```
    This runs 5 quality gates (tests, security, conventions, code quality, diff size). If any gate fails, fix the issues before proceeding. The PreToolUse hook will block `gh pr create` if no recent review has passed.
 
-6. **Commit, push, and create a PR.** Include the issue ID in the PR title (e.g., `DVA-5: Add README`). The GitHub Action will automatically move the issue to "In Review" and link the PR.
+6. **Commit, push, and create a PR.** Include the issue ID in the PR title (e.g., `DVA-5: Add README`). The GitHub Action will automatically move the issue to "In Review" and link the PR. Split the test plan into pre-merge and post-merge sections:
+
+   ```markdown
+   ## Test plan
+   - [x] All tests pass
+   - [x] Pre-PR review passes
+
+   ## Post-merge verification
+   - [ ] Verify dashboard updates on next scheduler run
+   - [ ] Confirm no excessive workflow runs after 1 hour
+   ```
+
+   Pre-merge items must all pass before opening the PR. Post-merge items are verified by the reviewer agent after merge (see PR Review Protocol below).
 
 7. **Post a completion comment** summarizing what was done using Linear MCP `create_comment` or the CLI fallback.
 
@@ -154,6 +166,24 @@ After pushing or opening a PR, the GitHub Action handles status transitions. Do 
 - **During work (pre-push):** Comment on significant decisions or blockers
 - **After finishing work (pre-push):** Comment a summary of what was accomplished
 - **On incomplete session exit:** Write a handoff document and post the summary to Linear
+
+### PR Review Protocol
+
+PRs created by worker agents are reviewed by a reviewer agent (DVA-65). The reviewer:
+
+1. **Pre-merge:** Reviews the diff, runs tests, verifies all pre-merge test plan items. Approves or requests changes (triggering the `pr-feedback.yml` loop).
+2. **Merge:** If all pre-merge checks pass, the reviewer auto-merges the PR (squash).
+3. **Post-merge verification:** Checks items in the "Post-merge verification" section of the PR. Posts results as a comment on both the PR and the Linear issue.
+4. **Rollback:** If post-merge verification fails, the reviewer reverts the merge commit, posts a detailed comment describing the failures observed, and re-opens the Linear issue with the `agent-failed` label.
+
+**Escalation:** After 2 review rounds without resolution, the reviewer:
+- Adds `needs-human-review` label on both the GitHub PR and Linear issue
+- Tags `@danielvaucrosson` in a PR comment
+- Stops reviewing — waits for human input
+
+**Labels:**
+- `agent-approved` — applied to the Linear issue when the reviewer merges a PR
+- `needs-human-review` — applied when escalating to human after max review rounds
 
 ## Audit Trail
 
