@@ -44,6 +44,23 @@ function gh(args, execFn) {
 }
 
 /**
+ * Post a comment on a PR using stdin (--body-file -) to avoid shell escaping
+ * issues with multi-line markdown on Windows Git Bash.
+ */
+function ghComment(prNumber, body, execFn) {
+  if (execFn) {
+    // In test mode, delegate to the exec function
+    return execFn(`gh pr comment ${prNumber} --body-file -<<__BODY__\n${body}\n__BODY__`);
+  }
+  execSync(`gh pr comment ${prNumber} --body-file -`, {
+    encoding: "utf-8",
+    cwd: PROJECT_ROOT,
+    input: body,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+}
+
+/**
  * Extract Linear issue ID from PR title or branch name.
  */
 export function extractIssueId(text) {
@@ -270,11 +287,7 @@ export function approvePR(prNumber, deps) {
  */
 export function requestChangesPR(prNumber, comment, deps) {
   const execFn = deps.exec;
-  const escapedComment = comment.replace(/"/g, '\\"').replace(/`/g, '\\`');
-  gh(
-    `pr comment ${prNumber} --body "${escapedComment}"`,
-    execFn
-  );
+  ghComment(prNumber, comment, execFn);
   // Add agent-actionable label so worker agent can pick up feedback
   gh(`pr edit ${prNumber} --add-label "agent-actionable"`, execFn);
 }
@@ -298,10 +311,7 @@ export function escalatePR(prNumber, issueId, deps) {
     "@danielvaucrosson — please review this PR manually.",
   ].join("\n");
 
-  gh(
-    `pr comment ${prNumber} --body "${comment.replace(/"/g, '\\"')}"`,
-    execFn
-  );
+  ghComment(prNumber, comment, execFn);
 
   // Update Linear issue if we have an issue ID
   if (issueId && deps.updateLinear) {
@@ -490,10 +500,7 @@ export function handlePostMergeFailure(prNumber, issueId, verification, deps) {
     `Reverting merge commit \`${mergeCommit.substring(0, 7)}\`.`,
   ].join("\n");
 
-  gh(
-    `pr comment ${prNumber} --body "${comment.replace(/"/g, '\\"')}"`,
-    execFn
-  );
+  ghComment(prNumber, comment, execFn);
 
   // Revert the merge commit
   try {
@@ -532,11 +539,11 @@ export function reviewPR(prNumber, deps) {
     ? deps.countRounds(prNumber)
     : countReviewRounds(prNumber, execFn);
 
-  console.log(`Reviewing PR #${prNumber} (${issueId || "no issue"}) — round ${rounds + 1}`);
+  console.error(`Reviewing PR #${prNumber} (${issueId || "no issue"}) — round ${rounds + 1}`);
 
   // Check if we should escalate
   if (rounds >= MAX_REVIEW_ROUNDS) {
-    console.log(`Escalating PR #${prNumber} after ${rounds} rounds`);
+    console.error(`Escalating PR #${prNumber} after ${rounds} rounds`);
     const comment = buildReviewComment(
       { gateResults: null, uncheckedItems: [] },
       "escalate"
@@ -552,12 +559,11 @@ export function reviewPR(prNumber, deps) {
   const validation = runPreMergeValidation(prNumber, deps);
 
   if (validation.passed) {
-    console.log(`PR #${prNumber} passed all checks — approving and merging`);
+    console.error(`PR #${prNumber} passed all checks — approving and merging`);
     const comment = buildReviewComment(validation, "approve");
     // Post approval summary as a regular comment (NOT via requestChangesPR,
     // which would incorrectly add the agent-actionable label)
-    const escapedComment = comment.replace(/"/g, '\\"').replace(/`/g, '\\`');
-    gh(`pr comment ${prNumber} --body "${escapedComment}"`, execFn);
+    ghComment(prNumber, comment, execFn);
     approvePR(prNumber, { exec: execFn });
 
     // Update Linear
@@ -569,7 +575,7 @@ export function reviewPR(prNumber, deps) {
   }
 
   // Request changes
-  console.log(`PR #${prNumber} failed checks — requesting changes`);
+  console.error(`PR #${prNumber} failed checks — requesting changes`);
   const comment = buildReviewComment(validation, "request-changes");
   requestChangesPR(prNumber, comment, { exec: execFn });
 
@@ -594,11 +600,11 @@ export function reviewAll(deps) {
     : listAgentPRs(deps.exec);
 
   if (prs.length === 0) {
-    console.log("No open agent PRs to review.");
+    console.error("No open agent PRs to review.");
     return [];
   }
 
-  console.log(`Found ${prs.length} open agent PR(s) to review`);
+  console.error(`Found ${prs.length} open agent PR(s) to review`);
 
   const results = [];
   for (const pr of prs) {
