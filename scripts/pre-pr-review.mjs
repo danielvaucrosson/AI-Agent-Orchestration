@@ -655,9 +655,9 @@ Exit codes:
 
   // Exit code
   if (result.overall === "fail" && !flags.force) {
-    console.log("\nPR creation blocked. Fix the issues above or use --force to override.");
+    console.error("\nPR creation blocked. Fix the issues above or use --force to override.");
     process.exit(1);
   } else if (flags.force && result.overall === "fail") {
-    console.log("\n⚠️  Force mode: proceeding despite failures.");
+    console.error("\n⚠️  Force mode: proceeding despite failures.");
   }
 }
