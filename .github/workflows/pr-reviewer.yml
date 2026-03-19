@@ -114,11 +114,18 @@ jobs:
           else
             RESULT=$(node scripts/pr-reviewer.mjs review-all)
           fi
-          echo "result=$RESULT" >> "$GITHUB_OUTPUT"
           echo "$RESULT"
 
-          # Parse action for downstream steps
-          ACTION=$(echo "$RESULT" | jq -r '.action // .[0].action // "unknown"')
+          # Write multi-line JSON to GITHUB_OUTPUT using delimiter syntax
+          echo "result<<RESULT_EOF" >> "$GITHUB_OUTPUT"
+          echo "$RESULT" >> "$GITHUB_OUTPUT"
+          echo "RESULT_EOF" >> "$GITHUB_OUTPUT"
+
+          # Parse action using Node.js (no jq dependency)
+          ACTION=$(node -e "
+            const r = JSON.parse(process.argv[1]);
+            console.log(r.action || (Array.isArray(r) && r[0] && r[0].action) || 'unknown');
+          " "$RESULT")
           echo "action=$ACTION" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ secrets.PAT_WITH_WORKFLOW }}
