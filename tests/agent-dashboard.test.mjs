@@ -842,4 +842,29 @@ describe("renderDashboard runner health", () => {
     const output = renderDashboard(data);
     assert.ok(output.includes("OFFLINE"));
   });
+
+  it("hides runner status and shows unavailable note when unknown", () => {
+    const data = buildDashboardData({
+      runs: [],
+      prs: [],
+      runnerData: { runners: [] },
+    });
+    const output = renderDashboard(data);
+    assert.ok(output.includes("RUNNER HEALTH"), "should still show health section");
+    assert.ok(!output.includes("UNKNOWN"), "should not show UNKNOWN status");
+    assert.ok(output.includes("unavailable"), "should show unavailable note");
+    assert.ok(output.includes("needs admin token scope"), "should mention token scope");
+  });
+
+  it("hides runner card in HTML when unknown", () => {
+    const data = buildDashboardData({
+      runs: [],
+      prs: [],
+      runnerData: { runners: [] },
+    });
+    const html = generateDashboardHTML(data);
+    assert.ok(!html.includes(">UNKNOWN<"), "should not show UNKNOWN in HTML");
+    assert.ok(html.includes(">N/A<"), "should show N/A for runner card");
+    assert.ok(html.includes("needs admin token"), "should mention admin token");
+  });
 });
