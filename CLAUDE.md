@@ -11,6 +11,8 @@ Tasks are managed in Linear and executed by AI agents via Claude Code. Work is d
 
 When you receive a task referencing a Linear issue (e.g., DVA-5), or are asked to pick up work:
 
+0. **Ensure a Linear issue exists.** If you're fixing a bug or making a change that doesn't have a Linear issue yet, create one first using the Linear MCP `save_issue` tool. Use the `Bug` label for bugs and appropriate labels for other work. All changes must be tracked in Linear.
+
 1. **Move the issue to "In Progress".** Use the Linear MCP `update_issue` tool:
    - Set `id` to the issue identifier (e.g., `DVA-5`)
    - Set `state` to `"In Progress"`
