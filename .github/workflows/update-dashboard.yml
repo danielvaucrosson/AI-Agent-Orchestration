@@ -8,10 +8,12 @@ name: Update Dashboard
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    # Fallback only — event-driven triggers below handle most updates.
+    # Reduced from */5 because GitHub throttles frequent crons anyway.
+    - cron: "*/15 * * * *"
   workflow_run:
-    workflows: ["Agent Worker"]
-    types: [completed]
+    workflows: ["Agent Worker", "Agent Scheduler", "Pulse Check"]
+    types: [requested, in_progress, completed]
   workflow_dispatch:
 
 permissions:
