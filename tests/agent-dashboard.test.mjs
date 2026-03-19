@@ -9,6 +9,12 @@ import {
   countDailyRuns,
   matchRunsToPRs,
   formatRelativeTime,
+  computeRunnerStatus,
+  computeQuotaTrend,
+  computeAvgDuration,
+  computeSuccessRate,
+  computeDaysSinceIncident,
+  buildRunnerHealth,
   buildDashboardData,
   renderDashboard,
   generateDashboardHTML,
@@ -461,5 +467,379 @@ describe("generateDashboardHTML", () => {
     assert.ok(html.includes("duration-bar"), "HTML should include duration-bar class");
     assert.ok(html.includes("duration-text"), "HTML should include duration-text class");
     assert.ok(html.includes("durationMs"), "renderHistory should reference durationMs");
+  });
+
+  it("includes runner health panel CSS and rendering", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("runner-health"), "HTML should include runner-health container");
+    assert.ok(html.includes("health-card"), "HTML should include health-card class");
+    assert.ok(html.includes("renderRunnerHealth"), "HTML should include renderRunnerHealth function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeRunnerStatus
+// ---------------------------------------------------------------------------
+
+describe("computeRunnerStatus", () => {
+  it("returns online when runners are available and not busy", () => {
+    const result = computeRunnerStatus({
+      runners: [{ status: "online", busy: false, os: "Linux" }],
+    });
+    assert.equal(result.status, "online");
+    assert.ok(result.lastSeen);
+  });
+
+  it("returns busy when all online runners are busy", () => {
+    const result = computeRunnerStatus({
+      runners: [
+        { status: "online", busy: true, os: "Linux" },
+        { status: "online", busy: true, os: "Linux" },
+      ],
+    });
+    assert.equal(result.status, "busy");
+  });
+
+  it("returns offline when no runners are online", () => {
+    const result = computeRunnerStatus({
+      runners: [{ status: "offline", busy: false, os: "Linux" }],
+    });
+    assert.equal(result.status, "offline");
+  });
+
+  it("returns unknown when no runners exist", () => {
+    const result = computeRunnerStatus({ runners: [] });
+    assert.equal(result.status, "unknown");
+    assert.equal(result.lastSeen, null);
+  });
+
+  it("handles null/undefined input", () => {
+    assert.equal(computeRunnerStatus(null).status, "unknown");
+    assert.equal(computeRunnerStatus(undefined).status, "unknown");
+  });
+
+  it("returns online when some runners are busy but not all", () => {
+    const result = computeRunnerStatus({
+      runners: [
+        { status: "online", busy: true, os: "Linux" },
+        { status: "online", busy: false, os: "Linux" },
+      ],
+    });
+    assert.equal(result.status, "online");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeQuotaTrend
+// ---------------------------------------------------------------------------
+
+describe("computeQuotaTrend", () => {
+  const NOW = Date.now();
+
+  it("counts today and yesterday runs separately", () => {
+    const runs = [
+      { created_at: new Date(NOW - 1 * 60 * 60 * 1000).toISOString() },  // 1h ago (today)
+      { created_at: new Date(NOW - 2 * 60 * 60 * 1000).toISOString() },  // 2h ago (today)
+      { created_at: new Date(NOW - 30 * 60 * 60 * 1000).toISOString() }, // 30h ago (yesterday)
+    ];
+    const result = computeQuotaTrend(runs, NOW);
+    assert.equal(result.today, 2);
+    assert.equal(result.yesterday, 1);
+    assert.equal(result.trend, "up");
+  });
+
+  it("returns flat when today equals yesterday", () => {
+    const runs = [
+      { created_at: new Date(NOW - 1 * 60 * 60 * 1000).toISOString() },
+      { created_at: new Date(NOW - 30 * 60 * 60 * 1000).toISOString() },
+    ];
+    const result = computeQuotaTrend(runs, NOW);
+    assert.equal(result.trend, "flat");
+  });
+
+  it("returns down when yesterday had more runs", () => {
+    const runs = [
+      { created_at: new Date(NOW - 30 * 60 * 60 * 1000).toISOString() },
+      { created_at: new Date(NOW - 35 * 60 * 60 * 1000).toISOString() },
+    ];
+    const result = computeQuotaTrend(runs, NOW);
+    assert.equal(result.today, 0);
+    assert.equal(result.yesterday, 2);
+    assert.equal(result.trend, "down");
+  });
+
+  it("handles empty runs", () => {
+    const result = computeQuotaTrend([], NOW);
+    assert.equal(result.today, 0);
+    assert.equal(result.yesterday, 0);
+    assert.equal(result.trend, "flat");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeAvgDuration
+// ---------------------------------------------------------------------------
+
+describe("computeAvgDuration", () => {
+  const NOW = Date.now();
+
+  it("computes average from completed runs in window", () => {
+    const runs = [
+      {
+        created_at: new Date(NOW - 1 * 60 * 60 * 1000).toISOString(),
+        run_started_at: new Date(NOW - 1 * 60 * 60 * 1000).toISOString(),
+        updated_at: new Date(NOW - 1 * 60 * 60 * 1000 + 600_000).toISOString(), // 10m
+      },
+      {
+        created_at: new Date(NOW - 2 * 60 * 60 * 1000).toISOString(),
+        run_started_at: new Date(NOW - 2 * 60 * 60 * 1000).toISOString(),
+        updated_at: new Date(NOW - 2 * 60 * 60 * 1000 + 300_000).toISOString(), // 5m
+      },
+    ];
+    const result = computeAvgDuration(runs, 7, NOW);
+    assert.equal(result.avgMs, 450_000); // avg of 600000 and 300000
+    assert.equal(result.avgFormatted, "7m 30s");
+    assert.equal(result.sampleSize, 2);
+  });
+
+  it("excludes runs outside the window", () => {
+    const runs = [
+      {
+        created_at: new Date(NOW - 10 * 24 * 60 * 60 * 1000).toISOString(), // 10 days ago
+        run_started_at: new Date(NOW - 10 * 24 * 60 * 60 * 1000).toISOString(),
+        updated_at: new Date(NOW - 10 * 24 * 60 * 60 * 1000 + 600_000).toISOString(),
+      },
+    ];
+    const result = computeAvgDuration(runs, 7, NOW);
+    assert.equal(result.avgMs, 0);
+    assert.equal(result.avgFormatted, "\u2014");
+    assert.equal(result.sampleSize, 0);
+  });
+
+  it("handles empty input", () => {
+    const result = computeAvgDuration([], 7, NOW);
+    assert.equal(result.sampleSize, 0);
+    assert.equal(result.avgFormatted, "\u2014");
+  });
+
+  it("skips runs with missing timestamps", () => {
+    const runs = [
+      { created_at: new Date(NOW - 1000).toISOString(), run_started_at: null, updated_at: null },
+    ];
+    const result = computeAvgDuration(runs, 7, NOW);
+    assert.equal(result.sampleSize, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeSuccessRate
+// ---------------------------------------------------------------------------
+
+describe("computeSuccessRate", () => {
+  const NOW = Date.now();
+
+  it("computes success rate from current 7-day window", () => {
+    const runs = [
+      { created_at: new Date(NOW - 1000).toISOString(), conclusion: "success" },
+      { created_at: new Date(NOW - 2000).toISOString(), conclusion: "success" },
+      { created_at: new Date(NOW - 3000).toISOString(), conclusion: "failure" },
+    ];
+    const result = computeSuccessRate(runs, 7, NOW);
+    assert.equal(result.rate, 67); // 2/3 = 66.67 -> 67%
+    assert.equal(result.currentWindow.succeeded, 2);
+    assert.equal(result.currentWindow.total, 3);
+  });
+
+  it("computes trend up when current rate is higher", () => {
+    const runs = [
+      // Current window: 100% success
+      { created_at: new Date(NOW - 1000).toISOString(), conclusion: "success" },
+      // Previous window: 50% success
+      { created_at: new Date(NOW - 8 * 24 * 60 * 60 * 1000).toISOString(), conclusion: "success" },
+      { created_at: new Date(NOW - 9 * 24 * 60 * 60 * 1000).toISOString(), conclusion: "failure" },
+    ];
+    const result = computeSuccessRate(runs, 7, NOW);
+    assert.equal(result.trend, "up");
+    assert.equal(result.rate, 100);
+  });
+
+  it("computes trend down when current rate is lower", () => {
+    const runs = [
+      // Current window: 0% success
+      { created_at: new Date(NOW - 1000).toISOString(), conclusion: "failure" },
+      // Previous window: 100% success
+      { created_at: new Date(NOW - 8 * 24 * 60 * 60 * 1000).toISOString(), conclusion: "success" },
+    ];
+    const result = computeSuccessRate(runs, 7, NOW);
+    assert.equal(result.trend, "down");
+    assert.equal(result.rate, 0);
+  });
+
+  it("returns flat when both windows are empty", () => {
+    const result = computeSuccessRate([], 7, NOW);
+    assert.equal(result.rate, 0);
+    assert.equal(result.trend, "flat");
+  });
+
+  it("returns 0% rate when no runs in current window", () => {
+    const runs = [
+      { created_at: new Date(NOW - 8 * 24 * 60 * 60 * 1000).toISOString(), conclusion: "success" },
+    ];
+    const result = computeSuccessRate(runs, 7, NOW);
+    assert.equal(result.rate, 0);
+    assert.equal(result.currentWindow.total, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// computeDaysSinceIncident
+// ---------------------------------------------------------------------------
+
+describe("computeDaysSinceIncident", () => {
+  const NOW = Date.now();
+
+  it("returns null when no Level 3 events exist", () => {
+    const result = computeDaysSinceIncident([], NOW);
+    assert.equal(result.days, null);
+    assert.equal(result.lastIncidentDate, null);
+  });
+
+  it("returns 0 days for a Level 3 event today", () => {
+    const events = [
+      { level: 3, timestamp: new Date(NOW - 1000).toISOString() },
+    ];
+    const result = computeDaysSinceIncident(events, NOW);
+    assert.equal(result.days, 0);
+    assert.ok(result.lastIncidentDate);
+  });
+
+  it("counts days since most recent Level 3 event", () => {
+    const threeDaysAgo = new Date(NOW - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const fiveDaysAgo = new Date(NOW - 5 * 24 * 60 * 60 * 1000).toISOString();
+    const events = [
+      { level: 3, timestamp: fiveDaysAgo },
+      { level: 3, timestamp: threeDaysAgo },
+    ];
+    const result = computeDaysSinceIncident(events, NOW);
+    assert.equal(result.days, 3);
+    assert.equal(result.lastIncidentDate, threeDaysAgo);
+  });
+
+  it("ignores Level 1 and Level 2 events", () => {
+    const events = [
+      { level: 1, timestamp: new Date(NOW - 1000).toISOString() },
+      { level: 2, timestamp: new Date(NOW - 2000).toISOString() },
+    ];
+    const result = computeDaysSinceIncident(events, NOW);
+    assert.equal(result.days, null);
+  });
+
+  it("handles null input", () => {
+    const result = computeDaysSinceIncident(null, NOW);
+    assert.equal(result.days, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildRunnerHealth
+// ---------------------------------------------------------------------------
+
+describe("buildRunnerHealth", () => {
+  const NOW = Date.now();
+
+  it("assembles all health metrics", () => {
+    const runs = [
+      { created_at: new Date(NOW - 1000).toISOString() },
+    ];
+    const completedRuns = [
+      {
+        created_at: new Date(NOW - 1000).toISOString(),
+        run_started_at: new Date(NOW - 1000).toISOString(),
+        updated_at: new Date(NOW + 599_000).toISOString(),
+        conclusion: "success",
+      },
+    ];
+    const result = buildRunnerHealth({
+      runs,
+      completedRuns,
+      recoveryEvents: [],
+      runnerData: { runners: [{ status: "online", busy: false, os: "Linux" }] },
+      nowMs: NOW,
+    });
+
+    assert.equal(result.runner.status, "online");
+    assert.equal(result.quotaTrend.today, 1);
+    assert.equal(result.avgDuration.sampleSize, 1);
+    assert.equal(result.successRate.rate, 100);
+    assert.equal(result.daysSinceIncident.days, null);
+  });
+
+  it("handles empty inputs", () => {
+    const result = buildRunnerHealth({
+      runs: [],
+      completedRuns: [],
+      recoveryEvents: [],
+      nowMs: NOW,
+    });
+    assert.equal(result.runner.status, "unknown");
+    assert.equal(result.quotaTrend.today, 0);
+    assert.equal(result.avgDuration.sampleSize, 0);
+    assert.equal(result.successRate.rate, 0);
+    assert.equal(result.daysSinceIncident.days, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildDashboardData — runnerHealth integration
+// ---------------------------------------------------------------------------
+
+describe("buildDashboardData runnerHealth", () => {
+  it("includes runnerHealth in output", () => {
+    const data = buildDashboardData({
+      runs: [],
+      prs: [],
+      recoveryEvents: [],
+      runnerData: { runners: [{ status: "online", busy: false, os: "Linux" }] },
+    });
+    assert.ok(data.runnerHealth);
+    assert.equal(data.runnerHealth.runner.status, "online");
+  });
+
+  it("defaults to unknown runner when no runnerData provided", () => {
+    const data = buildDashboardData({ runs: [], prs: [] });
+    assert.ok(data.runnerHealth);
+    assert.equal(data.runnerHealth.runner.status, "unknown");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderDashboard — runner health rendering
+// ---------------------------------------------------------------------------
+
+describe("renderDashboard runner health", () => {
+  it("renders runner health section", () => {
+    const data = buildDashboardData({
+      runs: [],
+      prs: [],
+      recoveryEvents: [],
+      runnerData: { runners: [{ status: "online", busy: false, os: "Linux" }] },
+    });
+    const output = renderDashboard(data);
+    assert.ok(output.includes("RUNNER HEALTH"));
+    assert.ok(output.includes("ONLINE"));
+    assert.ok(output.includes("Avg duration"));
+    assert.ok(output.includes("Success rate"));
+    assert.ok(output.includes("Since incident"));
+  });
+
+  it("shows correct runner status colors", () => {
+    // Offline runner
+    const data = buildDashboardData({
+      runs: [],
+      prs: [],
+      runnerData: { runners: [{ status: "offline", busy: false, os: "Linux" }] },
+    });
+    const output = renderDashboard(data);
+    assert.ok(output.includes("OFFLINE"));
   });
 });

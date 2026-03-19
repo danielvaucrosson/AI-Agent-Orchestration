@@ -5,6 +5,7 @@ import {
   parseArgs,
   fetchWorkflowRuns,
   fetchRecentPRs,
+  fetchRunnerData,
   fetchLinearStatus,
   enrichWithLinearStatus,
   buildStaticData,
@@ -75,6 +76,34 @@ describe("fetchRecentPRs", () => {
     const mockFetch = async () => ({ ok: false });
     const prs = await fetchRecentPRs("owner/repo", mockFetch);
     assert.deepEqual(prs, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchRunnerData
+// ---------------------------------------------------------------------------
+
+describe("fetchRunnerData", () => {
+  it("returns runners from API response", async () => {
+    const mockFetch = async () => ({
+      ok: true,
+      json: async () => ({ runners: [{ id: 1, status: "online", busy: false }] }),
+    });
+    const data = await fetchRunnerData("owner/repo", mockFetch);
+    assert.equal(data.runners.length, 1);
+    assert.equal(data.runners[0].status, "online");
+  });
+
+  it("returns empty runners on API failure", async () => {
+    const mockFetch = async () => ({ ok: false });
+    const data = await fetchRunnerData("owner/repo", mockFetch);
+    assert.deepEqual(data.runners, []);
+  });
+
+  it("returns empty runners on network error", async () => {
+    const mockFetch = async () => { throw new Error("network"); };
+    const data = await fetchRunnerData("owner/repo", mockFetch);
+    assert.deepEqual(data.runners, []);
   });
 });
 
@@ -321,5 +350,52 @@ describe("generateStaticHTML", () => {
       "should not contain raw </script> in JSON"
     );
     assert.ok(html.includes("\\u003c"), "should escape < as \\u003c");
+  });
+
+  it("includes runner health panel CSS and rendering", () => {
+    const html = generateStaticHTML(sampleData);
+    assert.ok(html.includes("runner-health"), "should include runner-health container");
+    assert.ok(html.includes("health-card"), "should include health-card CSS class");
+    assert.ok(html.includes("renderRunnerHealth"), "should include renderRunnerHealth function");
+  });
+
+  it("renders runner health data when present", () => {
+    const dataWithHealth = {
+      ...sampleData,
+      runnerHealth: {
+        runner: { status: "online", lastSeen: "2026-03-15T12:00:00Z" },
+        quotaTrend: { today: 3, yesterday: 2, trend: "up" },
+        avgDuration: { avgMs: 450000, avgFormatted: "7m 30s", sampleSize: 5 },
+        successRate: { rate: 80, trend: "up", currentWindow: { succeeded: 4, total: 5 }, previousWindow: { succeeded: 3, total: 5 } },
+        daysSinceIncident: { days: 12, lastIncidentDate: "2026-03-03T10:00:00Z" },
+      },
+    };
+    const html = generateStaticHTML(dataWithHealth);
+    assert.ok(html.includes("runnerHealth"), "embedded JSON should contain runnerHealth");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildStaticData — runner health integration
+// ---------------------------------------------------------------------------
+
+describe("buildStaticData runnerHealth", () => {
+  it("passes runnerData through to dashboard data", async () => {
+    const data = await buildStaticData([], [], {
+      repoUrl: "https://github.com/test/repo",
+      fetchStatusFn: async () => null,
+      runnerData: { runners: [{ status: "online", busy: false, os: "Linux" }] },
+    });
+    assert.ok(data.runnerHealth);
+    assert.equal(data.runnerHealth.runner.status, "online");
+  });
+
+  it("defaults to unknown when no runnerData provided", async () => {
+    const data = await buildStaticData([], [], {
+      repoUrl: "https://github.com/test/repo",
+      fetchStatusFn: async () => null,
+    });
+    assert.ok(data.runnerHealth);
+    assert.equal(data.runnerHealth.runner.status, "unknown");
   });
 });

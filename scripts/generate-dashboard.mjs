@@ -59,6 +59,25 @@ export async function fetchWorkflowRuns(repo, fetchFn = fetch) {
   }
 }
 
+export async function fetchRunnerData(repo, fetchFn = fetch) {
+  try {
+    const res = await fetchFn(
+      `https://api.github.com/repos/${repo}/actions/runners`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+          Accept: "application/vnd.github+json",
+        },
+      }
+    );
+    if (!res.ok) return { runners: [] };
+    const data = await res.json();
+    return { runners: data.runners || [] };
+  } catch {
+    return { runners: [] };
+  }
+}
+
 export async function fetchRecentPRs(repo, fetchFn = fetch) {
   try {
     const res = await fetchFn(
@@ -137,9 +156,9 @@ export async function enrichWithLinearStatus(
 export async function buildStaticData(
   runs,
   prs,
-  { repoUrl, fetchStatusFn = fetchLinearStatus, recoveryEvents } = {}
+  { repoUrl, fetchStatusFn = fetchLinearStatus, recoveryEvents, runnerData } = {}
 ) {
-  const raw = { runs, prs, recoveryEvents: recoveryEvents || [] };
+  const raw = { runs, prs, recoveryEvents: recoveryEvents || [], runnerData };
   const data = buildDashboardData(raw);
 
   // Strip internal fields
@@ -209,6 +228,26 @@ export function generateStaticHTML(data) {
   .gauge-succeeded .gauge-value { color: #3fb950; }
   .gauge-failed .gauge-value { color: #f85149; }
   .gauge-quota .gauge-value { color: #d29922; }
+  .runner-health { margin-bottom: 24px; }
+  .health-cards { display: flex; gap: 12px; flex-wrap: wrap; }
+  .health-card {
+    flex: 1; min-width: 150px; background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px; padding: 16px; text-align: center;
+  }
+  .health-value { font-size: 24px; font-weight: bold; }
+  .health-label {
+    color: #8b949e; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;
+  }
+  .health-sub { color: #8b949e; font-size: 11px; margin-top: 2px; }
+  .health-trend { font-size: 14px; margin-left: 4px; }
+  .trend-up { color: #3fb950; }
+  .trend-down { color: #f85149; }
+  .trend-flat { color: #8b949e; }
+  .status-online { color: #3fb950; }
+  .status-busy { color: #d29922; }
+  .status-offline { color: #f85149; }
+  .status-unknown { color: #8b949e; }
   .section-label {
     color: #8b949e; font-size: 12px;
     text-transform: uppercase; letter-spacing: 1px;
@@ -306,6 +345,7 @@ export function generateStaticHTML(data) {
 </header>
 <div class="container">
   <div class="gauges" id="gauges"></div>
+  <div id="runner-health"></div>
   <div id="recovery-panel"></div>
   <div class="agents">
     <div class="section-label">Active Agents</div>
@@ -376,6 +416,32 @@ function renderHistory(history) {
   return '<table><thead><tr><th>Status</th><th>Issue</th><th>Title</th><th>PR</th><th>Duration</th><th>When</th></tr></thead><tbody>' + rows + '</tbody></table>';
 }
 
+function renderRunnerHealth(h) {
+  if (!h) return '';
+  var statusColor = h.runner.status === 'online' ? 'status-online'
+    : h.runner.status === 'busy' ? 'status-busy'
+    : h.runner.status === 'offline' ? 'status-offline' : 'status-unknown';
+  var quotaTrend = h.quotaTrend.trend === 'up' ? '<span class="health-trend trend-down">&#8593;</span>'
+    : h.quotaTrend.trend === 'down' ? '<span class="health-trend trend-up">&#8595;</span>'
+    : '<span class="health-trend trend-flat">&#8594;</span>';
+  var rateColor = h.successRate.rate >= 80 ? 'status-online'
+    : h.successRate.rate >= 50 ? 'status-busy' : 'status-offline';
+  var rateTrend = h.successRate.trend === 'up' ? '<span class="health-trend trend-up">&#8593;</span>'
+    : h.successRate.trend === 'down' ? '<span class="health-trend trend-down">&#8595;</span>'
+    : '<span class="health-trend trend-flat">&#8594;</span>';
+  var incidentStr = h.daysSinceIncident.days === null ? 'N/A'
+    : h.daysSinceIncident.days === 0 ? 'TODAY' : String(h.daysSinceIncident.days);
+  var incidentColor = h.daysSinceIncident.days === null ? 'status-online'
+    : h.daysSinceIncident.days === 0 ? 'status-offline' : 'status-online';
+  return '<div class="runner-health"><div class="section-label">Runner Health</div><div class="health-cards">'
+    + '<div class="health-card"><div class="health-value ' + statusColor + '">' + escapeHtml(h.runner.status.toUpperCase()) + '</div><div class="health-label">Runner</div></div>'
+    + '<div class="health-card"><div class="health-value" style="color:#d29922">' + h.quotaTrend.today + quotaTrend + '</div><div class="health-label">Quota (24h)</div><div class="health-sub">yesterday: ' + h.quotaTrend.yesterday + '</div></div>'
+    + '<div class="health-card"><div class="health-value" style="color:#ffd54f">' + escapeHtml(h.avgDuration.avgFormatted) + '</div><div class="health-label">Avg Duration</div><div class="health-sub">' + h.avgDuration.sampleSize + ' runs (7d)</div></div>'
+    + '<div class="health-card"><div class="health-value ' + rateColor + '">' + h.successRate.rate + '%' + rateTrend + '</div><div class="health-label">Success Rate</div><div class="health-sub">' + h.successRate.currentWindow.succeeded + '/' + h.successRate.currentWindow.total + ' (7d)</div></div>'
+    + '<div class="health-card"><div class="health-value ' + incidentColor + '">' + incidentStr + '</div><div class="health-label">Days Since Incident</div><div class="health-sub">Level 3 escalations</div></div>'
+    + '</div></div>';
+}
+
 var LEVEL_META = {
   1: { label: 'Level 1', desc: 'Auto-fix', color: '#d29922' },
   2: { label: 'Level 2', desc: 'Kill + Retry', color: '#f0883e' },
@@ -415,6 +481,7 @@ function toggleRecoveryDetail(level) {
 }
 
 document.getElementById('gauges').innerHTML = renderGauges(DASHBOARD_DATA.gauges);
+document.getElementById('runner-health').innerHTML = renderRunnerHealth(DASHBOARD_DATA.runnerHealth);
 document.getElementById('recovery-panel').innerHTML = renderRecoveryPanel(DASHBOARD_DATA.recoveryLevels);
 document.getElementById('agents-list').innerHTML = renderAgents(DASHBOARD_DATA.activeAgents);
 document.getElementById('history-table').innerHTML = renderHistory(DASHBOARD_DATA.history);
@@ -444,11 +511,15 @@ if (isMain) {
   const prs = await fetchRecentPRs(repo);
   console.log(`  ${prs.length} PRs found`);
 
+  console.log("Fetching runner data...");
+  const runnerData = await fetchRunnerData(repo);
+  console.log(`  ${runnerData.runners.length} runner(s) found`);
+
   const recoveryEvents = readRecoveryEvents();
   console.log(`  ${recoveryEvents.length} recovery event(s) found`);
 
   console.log("Building dashboard data (with Linear enrichment)...");
-  const data = await buildStaticData(runs, prs, { repoUrl, recoveryEvents });
+  const data = await buildStaticData(runs, prs, { repoUrl, recoveryEvents, runnerData });
 
   console.log("Generating static HTML...");
   const html = generateStaticHTML(data);
