@@ -277,6 +277,186 @@ export function aggregateRecoveryLevels(events, today = null) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Runner health metrics — pure functions
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute runner status summary from GitHub Actions runner objects.
+ *
+ * @param {{ runners: object[] }} runnerData - from /repos/{owner}/{repo}/actions/runners
+ * @returns {{ status: "online"|"offline"|"busy"|"unknown", lastSeen: string|null }}
+ */
+export function computeRunnerStatus(runnerData) {
+  const runners = runnerData?.runners || [];
+  if (runners.length === 0) return { status: "unknown", lastSeen: null };
+
+  const online = runners.filter((r) => r.status === "online");
+  const busy = online.filter((r) => r.busy);
+
+  // Prefer the most recent runner's labels for lastSeen
+  const lastSeen = runners[0]?.os
+    ? new Date().toISOString()
+    : null;
+
+  if (online.length === 0) return { status: "offline", lastSeen };
+  if (busy.length === online.length) return { status: "busy", lastSeen };
+  return { status: "online", lastSeen };
+}
+
+/**
+ * Compute the daily quota trend by comparing today's run count
+ * against yesterday's.
+ *
+ * @param {object[]} runs - All workflow runs (with created_at)
+ * @param {number} [nowMs] - Current time in ms (for testing)
+ * @returns {{ today: number, yesterday: number, trend: "up"|"down"|"flat" }}
+ */
+export function computeQuotaTrend(runs, nowMs = Date.now()) {
+  const todayCutoff = nowMs - 24 * 60 * 60 * 1000;
+  const yesterdayCutoff = nowMs - 48 * 60 * 60 * 1000;
+
+  let today = 0;
+  let yesterday = 0;
+  for (const r of runs) {
+    const ts = new Date(r.created_at).getTime();
+    if (ts > todayCutoff) today++;
+    else if (ts > yesterdayCutoff) yesterday++;
+  }
+
+  const trend = today > yesterday ? "up" : today < yesterday ? "down" : "flat";
+  return { today, yesterday, trend };
+}
+
+/**
+ * Compute rolling average task duration from completed runs.
+ *
+ * @param {object[]} completedRuns - Completed workflow runs
+ * @param {number} [days=7] - Rolling window in days
+ * @param {number} [nowMs] - Current time in ms (for testing)
+ * @returns {{ avgMs: number, avgFormatted: string, sampleSize: number }}
+ */
+export function computeAvgDuration(completedRuns, days = 7, nowMs = Date.now()) {
+  const cutoff = nowMs - days * 24 * 60 * 60 * 1000;
+  const durations = [];
+
+  for (const run of completedRuns) {
+    const createdTs = new Date(run.created_at).getTime();
+    if (createdTs < cutoff) continue;
+
+    const startTs = run.run_started_at || run.created_at;
+    const endTs = run.updated_at;
+    if (!startTs || !endTs) continue;
+
+    const ms = new Date(endTs).getTime() - new Date(startTs).getTime();
+    if (ms > 0) durations.push(ms);
+  }
+
+  if (durations.length === 0) {
+    return { avgMs: 0, avgFormatted: "—", sampleSize: 0 };
+  }
+
+  const avgMs = Math.round(durations.reduce((a, b) => a + b, 0) / durations.length);
+  const totalSecs = Math.floor(avgMs / 1000);
+  const mins = Math.floor(totalSecs / 60);
+  const secs = totalSecs % 60;
+
+  return { avgMs, avgFormatted: `${mins}m ${secs}s`, sampleSize: durations.length };
+}
+
+/**
+ * Compute rolling success rate from completed runs.
+ *
+ * @param {object[]} completedRuns - Completed workflow runs
+ * @param {number} [days=7] - Rolling window in days
+ * @param {number} [nowMs] - Current time in ms (for testing)
+ * @returns {{ rate: number, trend: "up"|"down"|"flat", currentWindow: { succeeded: number, total: number }, previousWindow: { succeeded: number, total: number } }}
+ */
+export function computeSuccessRate(completedRuns, days = 7, nowMs = Date.now()) {
+  const currentCutoff = nowMs - days * 24 * 60 * 60 * 1000;
+  const previousCutoff = nowMs - 2 * days * 24 * 60 * 60 * 1000;
+
+  let curSuccess = 0, curTotal = 0;
+  let prevSuccess = 0, prevTotal = 0;
+
+  for (const run of completedRuns) {
+    const ts = new Date(run.created_at).getTime();
+    if (ts >= currentCutoff) {
+      curTotal++;
+      if (run.conclusion === "success") curSuccess++;
+    } else if (ts >= previousCutoff) {
+      prevTotal++;
+      if (run.conclusion === "success") prevSuccess++;
+    }
+  }
+
+  const rate = curTotal > 0 ? Math.round((curSuccess / curTotal) * 100) : 0;
+  const prevRate = prevTotal > 0 ? Math.round((prevSuccess / prevTotal) * 100) : 0;
+  const trend = curTotal === 0 && prevTotal === 0 ? "flat"
+    : rate > prevRate ? "up" : rate < prevRate ? "down" : "flat";
+
+  return {
+    rate,
+    trend,
+    currentWindow: { succeeded: curSuccess, total: curTotal },
+    previousWindow: { succeeded: prevSuccess, total: prevTotal },
+  };
+}
+
+/**
+ * Compute days since the last Level 3 recovery incident.
+ *
+ * @param {object[]} recoveryEvents - Recovery event objects
+ * @param {number} [nowMs] - Current time in ms (for testing)
+ * @returns {{ days: number|null, lastIncidentDate: string|null }}
+ */
+export function computeDaysSinceIncident(recoveryEvents, nowMs = Date.now()) {
+  const level3Events = (recoveryEvents || []).filter((e) => e.level === 3);
+  if (level3Events.length === 0) {
+    return { days: null, lastIncidentDate: null };
+  }
+
+  // Find most recent Level 3 event
+  let latestMs = 0;
+  let latestDate = null;
+  for (const e of level3Events) {
+    const ts = new Date(e.timestamp).getTime();
+    if (ts > latestMs) {
+      latestMs = ts;
+      latestDate = e.timestamp;
+    }
+  }
+
+  const days = Math.floor((nowMs - latestMs) / (24 * 60 * 60 * 1000));
+  return { days, lastIncidentDate: latestDate };
+}
+
+/**
+ * Build the complete runner health metrics object.
+ *
+ * @param {object} params
+ * @param {object[]} params.runs - All workflow runs
+ * @param {object[]} params.completedRuns - Completed workflow runs
+ * @param {object[]} params.recoveryEvents - Recovery event objects
+ * @param {{ runners: object[] }} [params.runnerData] - Runner API response
+ * @param {number} [params.nowMs] - Current time in ms (for testing)
+ * @returns {object} Runner health metrics
+ */
+export function buildRunnerHealth({ runs, completedRuns, recoveryEvents, runnerData, nowMs }) {
+  const now = nowMs || Date.now();
+  return {
+    runner: computeRunnerStatus(runnerData),
+    quotaTrend: computeQuotaTrend(runs, now),
+    avgDuration: computeAvgDuration(completedRuns, 7, now),
+    successRate: computeSuccessRate(completedRuns, 7, now),
+    daysSinceIncident: computeDaysSinceIncident(recoveryEvents, now),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Dashboard data builder
+// ---------------------------------------------------------------------------
+
 /**
  * Build structured dashboard data from raw API results.
  * Used by both CLI renderer and web API endpoint.
@@ -285,10 +465,11 @@ export function aggregateRecoveryLevels(events, today = null) {
  * @param {object[]} raw.runs - Workflow run objects
  * @param {object[]} raw.prs - PR objects
  * @param {object[]} [raw.recoveryEvents] - Recovery event objects (optional)
+ * @param {{ runners: object[] }} [raw.runnerData] - Runner API response (optional)
  * @returns {object} Structured dashboard data
  */
 export function buildDashboardData(raw) {
-  const { runs, prs, recoveryEvents } = raw;
+  const { runs, prs, recoveryEvents, runnerData } = raw;
   const { active, completed } = categorizeRuns(runs);
   const prMap = matchRunsToPRs(completed, prs);
   const dailyCount = countDailyRuns(runs);
@@ -343,6 +524,13 @@ export function buildDashboardData(raw) {
 
   const recovery = aggregateRecoveryLevels(recoveryEvents || []);
 
+  const runnerHealth = buildRunnerHealth({
+    runs,
+    completedRuns: completed,
+    recoveryEvents: recoveryEvents || [],
+    runnerData,
+  });
+
   return {
     gauges: {
       running: runningCount,
@@ -356,6 +544,7 @@ export function buildDashboardData(raw) {
     activeAgents,
     history,
     recoveryLevels: recovery,
+    runnerHealth,
     // Keep raw references for CLI renderer
     _active: active,
     _completed: completed,
@@ -397,6 +586,55 @@ export function renderDashboard(data, opts = {}) {
     `${C.green}TOTAL:${C.reset}   ${C.green}${totalSucceeded} succeeded${C.reset}  ${C.red}${totalFailed} failed${C.reset}`
   );
   lines.push("");
+
+  // Runner health panel
+  const health = data.runnerHealth;
+  if (health) {
+    lines.push(`${C.dim}${"─".repeat(62)}${C.reset}`);
+    lines.push(`${C.cyan}RUNNER HEALTH${C.reset}`);
+    lines.push("");
+
+    // Runner status
+    const statusColor = health.runner.status === "online" ? C.green
+      : health.runner.status === "busy" ? C.yellow
+      : health.runner.status === "offline" ? C.red : C.dim;
+    lines.push(
+      `  Runner:         ${statusColor}${C.bold}${health.runner.status.toUpperCase()}${C.reset}`
+    );
+
+    // Quota trend
+    const trendArrow = health.quotaTrend.trend === "up" ? `${C.red}\u2191${C.reset}`
+      : health.quotaTrend.trend === "down" ? `${C.green}\u2193${C.reset}` : `${C.dim}\u2192${C.reset}`;
+    lines.push(
+      `  Quota:          ${dailyCount}/${dailyLimit} ${trendArrow}  ${C.dim}(yesterday: ${health.quotaTrend.yesterday})${C.reset}`
+    );
+
+    // Avg duration
+    lines.push(
+      `  Avg duration:   ${C.yellow}${health.avgDuration.avgFormatted}${C.reset}  ${C.dim}(${health.avgDuration.sampleSize} runs, 7d)${C.reset}`
+    );
+
+    // Success rate
+    const rateColor = health.successRate.rate >= 80 ? C.green
+      : health.successRate.rate >= 50 ? C.yellow : C.red;
+    const rateTrend = health.successRate.trend === "up" ? `${C.green}\u2191${C.reset}`
+      : health.successRate.trend === "down" ? `${C.red}\u2193${C.reset}` : `${C.dim}\u2192${C.reset}`;
+    lines.push(
+      `  Success rate:   ${rateColor}${C.bold}${health.successRate.rate}%${C.reset} ${rateTrend}  ${C.dim}(${health.successRate.currentWindow.succeeded}/${health.successRate.currentWindow.total}, 7d)${C.reset}`
+    );
+
+    // Days since incident
+    const incidentStr = health.daysSinceIncident.days === null
+      ? `${C.green}No incidents recorded${C.reset}`
+      : health.daysSinceIncident.days === 0
+        ? `${C.red}${C.bold}TODAY${C.reset}`
+        : `${C.green}${health.daysSinceIncident.days}${C.reset} ${C.dim}day${health.daysSinceIncident.days !== 1 ? "s" : ""}${C.reset}`;
+    lines.push(
+      `  Since incident: ${incidentStr}`
+    );
+
+    lines.push("");
+  }
 
   // Recovery levels
   const recovery = data.recoveryLevels;
@@ -541,6 +779,28 @@ export function generateDashboardHTML() {
   .gauge-failed .gauge-value { color: #f85149; }
   .gauge-quota .gauge-value { color: #d29922; }
 
+  /* Runner health panel */
+  .runner-health { margin-bottom: 24px; }
+  .health-cards { display: flex; gap: 12px; flex-wrap: wrap; }
+  .health-card {
+    flex: 1; min-width: 150px; background: #161b22; border: 1px solid #30363d;
+    border-radius: 10px; padding: 16px; text-align: center;
+  }
+  .health-value { font-size: 24px; font-weight: bold; }
+  .health-label {
+    color: #8b949e; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;
+  }
+  .health-sub { color: #8b949e; font-size: 11px; margin-top: 2px; }
+  .health-trend { font-size: 14px; margin-left: 4px; }
+  .trend-up { color: #3fb950; }
+  .trend-down { color: #f85149; }
+  .trend-flat { color: #8b949e; }
+  .status-online { color: #3fb950; }
+  .status-busy { color: #d29922; }
+  .status-offline { color: #f85149; }
+  .status-unknown { color: #8b949e; }
+
   /* Recovery levels panel */
   .recovery-panel { margin-bottom: 24px; }
   .recovery-panel.has-alert { }
@@ -645,6 +905,7 @@ export function generateDashboardHTML() {
 </header>
 <div class="container">
   <div class="gauges" id="gauges"></div>
+  <div id="runner-health"></div>
   <div id="recovery-panel"></div>
   <div class="agents">
     <div class="section-label">Active Agents</div>
@@ -743,6 +1004,56 @@ function renderHistory(history) {
   \`;
 }
 
+function renderRunnerHealth(h) {
+  if (!h) return '';
+  const statusColor = h.runner.status === 'online' ? 'status-online'
+    : h.runner.status === 'busy' ? 'status-busy'
+    : h.runner.status === 'offline' ? 'status-offline' : 'status-unknown';
+  const quotaTrend = h.quotaTrend.trend === 'up' ? '<span class="health-trend trend-down">&#8593;</span>'
+    : h.quotaTrend.trend === 'down' ? '<span class="health-trend trend-up">&#8595;</span>'
+    : '<span class="health-trend trend-flat">&#8594;</span>';
+  const rateColor = h.successRate.rate >= 80 ? 'status-online'
+    : h.successRate.rate >= 50 ? 'status-busy' : 'status-offline';
+  const rateTrend = h.successRate.trend === 'up' ? '<span class="health-trend trend-up">&#8593;</span>'
+    : h.successRate.trend === 'down' ? '<span class="health-trend trend-down">&#8595;</span>'
+    : '<span class="health-trend trend-flat">&#8594;</span>';
+  const incidentStr = h.daysSinceIncident.days === null ? 'N/A'
+    : h.daysSinceIncident.days === 0 ? 'TODAY' : String(h.daysSinceIncident.days);
+  const incidentColor = h.daysSinceIncident.days === null ? 'status-online'
+    : h.daysSinceIncident.days === 0 ? 'status-offline' : 'status-online';
+  return \`
+    <div class="runner-health">
+      <div class="section-label">Runner Health</div>
+      <div class="health-cards">
+        <div class="health-card">
+          <div class="health-value \${statusColor}">\${escapeHtml(h.runner.status.toUpperCase())}</div>
+          <div class="health-label">Runner</div>
+        </div>
+        <div class="health-card">
+          <div class="health-value" style="color:#d29922">\${h.quotaTrend.today}\${quotaTrend}</div>
+          <div class="health-label">Quota (24h)</div>
+          <div class="health-sub">yesterday: \${h.quotaTrend.yesterday}</div>
+        </div>
+        <div class="health-card">
+          <div class="health-value" style="color:#ffd54f">\${escapeHtml(h.avgDuration.avgFormatted)}</div>
+          <div class="health-label">Avg Duration</div>
+          <div class="health-sub">\${h.avgDuration.sampleSize} runs (7d)</div>
+        </div>
+        <div class="health-card">
+          <div class="health-value \${rateColor}">\${h.successRate.rate}%\${rateTrend}</div>
+          <div class="health-label">Success Rate</div>
+          <div class="health-sub">\${h.successRate.currentWindow.succeeded}/\${h.successRate.currentWindow.total} (7d)</div>
+        </div>
+        <div class="health-card">
+          <div class="health-value \${incidentColor}">\${incidentStr}</div>
+          <div class="health-label">Days Since Incident</div>
+          <div class="health-sub">Level 3 escalations</div>
+        </div>
+      </div>
+    </div>
+  \`;
+}
+
 const LEVEL_META = {
   1: { label: 'Level 1', desc: 'Auto-fix', color: '#d29922' },
   2: { label: 'Level 2', desc: 'Kill + Retry', color: '#f0883e' },
@@ -819,6 +1130,7 @@ async function refresh() {
     if (!res.ok) throw new Error('API error');
     const data = await res.json();
     document.getElementById('gauges').innerHTML = renderGauges(data.gauges);
+    document.getElementById('runner-health').innerHTML = renderRunnerHealth(data.runnerHealth);
     document.getElementById('recovery-panel').innerHTML = renderRecoveryPanel(data.recoveryLevels);
     document.getElementById('agents-list').innerHTML = renderAgents(data.activeAgents);
     document.getElementById('history-table').innerHTML = renderHistory(data.history);
@@ -871,11 +1183,17 @@ function fetchRecentPRs() {
   }
 }
 
+function fetchRunnerData() {
+  const data = ghApi(`/repos/{owner}/{repo}/actions/runners`);
+  return data || { runners: [] };
+}
+
 function fetchRawData() {
   return {
     runs: fetchWorkflowRuns(),
     prs: fetchRecentPRs(),
     recoveryEvents: readRecoveryEvents(),
+    runnerData: fetchRunnerData(),
   };
 }
 
