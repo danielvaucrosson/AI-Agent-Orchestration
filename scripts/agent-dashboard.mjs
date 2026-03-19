@@ -454,6 +454,94 @@ export function buildRunnerHealth({ runs, completedRuns, recoveryEvents, runnerD
 }
 
 // ---------------------------------------------------------------------------
+// Gantt chart data builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Status-to-color mapping for Gantt bars.
+ */
+export const GANTT_COLORS = {
+  success: "#3fb950",
+  failure: "#f85149",
+  in_progress: "#58a6ff",
+  queued: "#d29922",
+};
+
+/**
+ * Build Gantt chart data from workflow runs.
+ * Each run becomes a horizontal bar with a start time, end time, and status.
+ *
+ * @param {object[]} runs - Workflow run objects from GitHub API
+ * @param {number} [nowMs] - Current time in ms (for testing)
+ * @returns {{ bars: object[], minTime: number, maxTime: number }}
+ */
+export function buildGanttData(runs, nowMs = Date.now()) {
+  if (!runs || runs.length === 0) {
+    return { bars: [], minTime: nowMs, maxTime: nowMs };
+  }
+
+  const bars = [];
+
+  for (const run of runs) {
+    const { issueId, issueTitle } = extractRunInfo(run);
+    const startTs = run.run_started_at || run.created_at;
+    if (!startTs) continue;
+
+    const startMs = new Date(startTs).getTime();
+    if (isNaN(startMs)) continue;
+
+    let endMs;
+    let status;
+
+    if (run.status === "queued") {
+      status = "queued";
+      // Queued runs show a thin bar from created_at to now
+      endMs = nowMs;
+    } else if (run.status === "in_progress") {
+      status = "in_progress";
+      endMs = nowMs;
+    } else if (run.status === "completed") {
+      status = run.conclusion === "success" ? "success" : "failure";
+      endMs = run.updated_at ? new Date(run.updated_at).getTime() : nowMs;
+      if (isNaN(endMs)) endMs = nowMs;
+    } else {
+      continue;
+    }
+
+    // Ensure bar has a minimum visible width (at least 1% of total range later)
+    if (endMs < startMs) endMs = startMs;
+
+    bars.push({
+      issueId,
+      issueTitle,
+      status,
+      color: GANTT_COLORS[status] || "#8b949e",
+      startMs,
+      endMs,
+      startTime: startTs,
+      endTime: run.updated_at || new Date(nowMs).toISOString(),
+      duration: run.status === "completed"
+        ? formatCompletedDuration(startTs, run.updated_at)
+        : formatDuration(startTs),
+    });
+  }
+
+  // Sort bars by start time (earliest first)
+  bars.sort((a, b) => a.startMs - b.startMs);
+
+  // Compute the time range for the chart
+  let minTime = nowMs;
+  let maxTime = 0;
+  for (const bar of bars) {
+    if (bar.startMs < minTime) minTime = bar.startMs;
+    if (bar.endMs > maxTime) maxTime = bar.endMs;
+  }
+  if (maxTime <= minTime) maxTime = minTime + 1;
+
+  return { bars, minTime, maxTime };
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard data builder
 // ---------------------------------------------------------------------------
 
@@ -531,6 +619,8 @@ export function buildDashboardData(raw) {
     runnerData,
   });
 
+  const gantt = buildGanttData(runs);
+
   return {
     gauges: {
       running: runningCount,
@@ -545,6 +635,7 @@ export function buildDashboardData(raw) {
     history,
     recoveryLevels: recovery,
     runnerHealth,
+    gantt,
     // Keep raw references for CLI renderer
     _active: active,
     _completed: completed,
@@ -720,6 +811,43 @@ export function renderDashboard(data, opts = {}) {
     }
   }
 
+  // Gantt chart
+  const gantt = data.gantt;
+  if (gantt && gantt.bars && gantt.bars.length > 0) {
+    lines.push("");
+    lines.push(`${C.dim}${"─".repeat(62)}${C.reset}`);
+    lines.push(`${C.cyan}WORKFLOW TIMELINE${C.reset}`);
+    lines.push("");
+
+    const range = gantt.maxTime - gantt.minTime || 1;
+    const trackWidth = 36; // characters wide
+
+    for (const bar of gantt.bars) {
+      const leftFrac = (bar.startMs - gantt.minTime) / range;
+      const widthFrac = (bar.endMs - bar.startMs) / range;
+      const leftChars = Math.round(leftFrac * trackWidth);
+      const widthChars = Math.max(1, Math.round(widthFrac * trackWidth));
+
+      const colorCode = bar.status === "success" ? C.green
+        : bar.status === "failure" ? C.red
+        : bar.status === "in_progress" ? C.cyan
+        : C.yellow;
+
+      const label = bar.issueId.padEnd(10);
+      const prefix = " ".repeat(leftChars);
+      const barStr = "█".repeat(widthChars);
+
+      lines.push(
+        `  ${C.cyan}${label}${C.reset} ${prefix}${colorCode}${barStr}${C.reset} ${C.dim}${bar.duration}${C.reset}`
+      );
+    }
+
+    lines.push("");
+    lines.push(
+      `  ${C.green}█${C.reset} Success  ${C.red}█${C.reset} Failed  ${C.cyan}█${C.reset} Running  ${C.yellow}█${C.reset} Queued`
+    );
+  }
+
   // Footer
   lines.push("");
   if (opts.webUrl) {
@@ -893,6 +1021,55 @@ export function generateDashboardHTML() {
   .duration-text { position: relative; z-index: 1; }
   .when { color: #8b949e; }
   .check { font-size: 16px; }
+
+  /* Gantt chart */
+  .gantt-panel { margin-bottom: 24px; }
+  .gantt-chart {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 16px; overflow-x: auto;
+  }
+  .gantt-axis {
+    display: flex; justify-content: space-between;
+    color: #8b949e; font-size: 11px; padding: 0 0 8px 120px;
+    border-bottom: 1px solid #21262d; margin-bottom: 8px;
+  }
+  .gantt-rows { min-width: 600px; }
+  .gantt-row {
+    display: flex; align-items: center; padding: 4px 0;
+    border-bottom: 1px solid #161b22;
+  }
+  .gantt-row:hover { background: rgba(88, 166, 255, 0.04); }
+  .gantt-label {
+    width: 120px; min-width: 120px; font-size: 12px;
+    color: #58a6ff; font-weight: 500; padding-right: 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .gantt-track {
+    flex: 1; position: relative; height: 22px;
+    background: rgba(48, 54, 61, 0.3); border-radius: 3px;
+  }
+  .gantt-bar {
+    position: absolute; top: 2px; bottom: 2px; border-radius: 3px;
+    min-width: 4px; cursor: default; transition: opacity 0.2s;
+  }
+  .gantt-bar:hover { opacity: 0.85; }
+  .gantt-bar-text {
+    position: absolute; left: 6px; top: 50%; transform: translateY(-50%);
+    font-size: 10px; color: #fff; white-space: nowrap;
+    pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  }
+  .gantt-legend {
+    display: flex; gap: 16px; margin-top: 12px; padding-top: 8px;
+    border-top: 1px solid #21262d;
+  }
+  .gantt-legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #8b949e; }
+  .gantt-legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+  .gantt-empty { color: #8b949e; font-style: italic; padding: 16px; text-align: center; }
+  @media (max-width: 768px) {
+    .gantt-label { width: 80px; min-width: 80px; font-size: 11px; }
+    .gantt-axis { padding-left: 80px; }
+    .gantt-bar-text { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -914,6 +1091,10 @@ export function generateDashboardHTML() {
   <div class="history">
     <div class="section-label">Recent Runs</div>
     <div id="history-table"></div>
+  </div>
+  <div class="gantt-panel">
+    <div class="section-label">Workflow Timeline</div>
+    <div id="gantt-chart"></div>
   </div>
 </div>
 <script>
@@ -1124,6 +1305,56 @@ function toggleRecoveryDetail(level) {
   if (el) el.classList.toggle('open');
 }
 
+function renderGanttChart(gantt) {
+  if (!gantt || !gantt.bars || gantt.bars.length === 0) {
+    return '<div class="gantt-empty">No workflow runs to display</div>';
+  }
+  const { bars, minTime, maxTime } = gantt;
+  const range = maxTime - minTime || 1;
+
+  // Build time axis labels (up to 5 evenly spaced)
+  const axisCount = 5;
+  const axisLabels = [];
+  for (let i = 0; i < axisCount; i++) {
+    const t = minTime + (range * i / (axisCount - 1));
+    const d = new Date(t);
+    axisLabels.push(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+  }
+  const axisHtml = '<div class="gantt-axis">' + axisLabels.map(function(l) {
+    return '<span>' + escapeHtml(l) + '</span>';
+  }).join('') + '</div>';
+
+  // Build rows
+  const rowsHtml = bars.map(function(bar) {
+    const leftPct = Math.max(0, ((bar.startMs - minTime) / range) * 100);
+    const widthPct = Math.max(0.5, ((bar.endMs - bar.startMs) / range) * 100);
+    const barTitle = escapeHtml(bar.issueId + ': ' + bar.issueTitle + ' (' + bar.duration + ')');
+    // Only show text if bar is wide enough
+    const textHtml = widthPct > 8
+      ? '<span class="gantt-bar-text">' + escapeHtml(bar.duration) + '</span>'
+      : '';
+    return '<div class="gantt-row">'
+      + '<div class="gantt-label" title="' + escapeHtml(bar.issueTitle) + '">' + escapeHtml(bar.issueId) + '</div>'
+      + '<div class="gantt-track">'
+      + '<div class="gantt-bar" style="left:' + leftPct.toFixed(2) + '%;width:' + widthPct.toFixed(2) + '%;background:' + bar.color + '" title="' + barTitle + '">'
+      + textHtml
+      + '</div></div></div>';
+  }).join('');
+
+  // Legend
+  const legendItems = [
+    { color: '#3fb950', label: 'Success' },
+    { color: '#f85149', label: 'Failed' },
+    { color: '#58a6ff', label: 'In Progress' },
+    { color: '#d29922', label: 'Queued' },
+  ];
+  const legendHtml = '<div class="gantt-legend">' + legendItems.map(function(item) {
+    return '<div class="gantt-legend-item"><div class="gantt-legend-dot" style="background:' + item.color + '"></div>' + item.label + '</div>';
+  }).join('') + '</div>';
+
+  return '<div class="gantt-chart">' + axisHtml + '<div class="gantt-rows">' + rowsHtml + '</div>' + legendHtml + '</div>';
+}
+
 async function refresh() {
   try {
     const res = await fetch('/api/status');
@@ -1134,6 +1365,7 @@ async function refresh() {
     document.getElementById('recovery-panel').innerHTML = renderRecoveryPanel(data.recoveryLevels);
     document.getElementById('agents-list').innerHTML = renderAgents(data.activeAgents);
     document.getElementById('history-table').innerHTML = renderHistory(data.history);
+    document.getElementById('gantt-chart').innerHTML = renderGanttChart(data.gantt);
     document.getElementById('last-update').textContent =
       'Updated: ' + new Date().toLocaleTimeString();
   } catch (err) {
