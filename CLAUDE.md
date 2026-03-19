@@ -215,6 +215,10 @@ The lead agent can also use Linear MCP tools directly for sub-issue creation and
 
 Worker agents should run `node scripts/pre-pr-review.mjs` on their sub-task branch before marking the sub-issue as Done.
 
+## Style Preferences
+
+- Never wrap URLs/links in bold (`**`). Bold markdown breaks URL selection on mobile.
+
 ## Environment
 
 - Run `npm install` before using Linear CLI scripts

@@ -167,6 +167,7 @@ const isMain = process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href;
 
 if (isMain) {
+  (async () => {
   const args = parseArgs(process.argv.slice(2));
 
   if (args.command === "help" || !args.command) {
@@ -306,4 +307,8 @@ Outputs (for GitHub Actions):
       process.exit(1);
     }
   }
+  })().catch(err => {
+    console.error(`Fatal: ${err.message}`);
+    process.exit(1);
+  });
 }
