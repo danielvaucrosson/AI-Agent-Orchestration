@@ -16,8 +16,10 @@ import assert from "node:assert/strict";
 
 import {
   buildDashboardData,
+  buildGanttData,
   renderDashboard,
   generateDashboardHTML,
+  GANTT_COLORS,
 } from "../scripts/agent-dashboard.mjs";
 
 import { generateStaticHTML } from "../scripts/generate-dashboard.mjs";
@@ -620,5 +622,295 @@ describe("duration bars — static HTML includes bar markup", () => {
 
     const html = generateStaticHTML(publicData);
     assert.ok(html.includes("durationMs"), "Static renderHistory should use durationMs for bar width");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gantt Chart Tests — buildGanttData
+// ---------------------------------------------------------------------------
+
+describe("buildGanttData — transforms runs into timeline bars", () => {
+  it("returns empty bars array for empty runs", () => {
+    const result = buildGanttData([], Date.now());
+    assert.deepStrictEqual(result.bars, []);
+  });
+
+  it("returns empty bars array for null runs", () => {
+    const result = buildGanttData(null, Date.now());
+    assert.deepStrictEqual(result.bars, []);
+  });
+
+  it("creates bars for each run with correct status", () => {
+    const now = Date.now();
+    const runs = [
+      {
+        id: 1, status: "completed", conclusion: "success",
+        created_at: new Date(now - 600_000).toISOString(),
+        run_started_at: new Date(now - 600_000).toISOString(),
+        updated_at: new Date(now - 300_000).toISOString(),
+        inputs: { issue_id: "DVA-1", issue_title: "Success task" },
+      },
+      {
+        id: 2, status: "completed", conclusion: "failure",
+        created_at: new Date(now - 500_000).toISOString(),
+        run_started_at: new Date(now - 500_000).toISOString(),
+        updated_at: new Date(now - 200_000).toISOString(),
+        inputs: { issue_id: "DVA-2", issue_title: "Failed task" },
+      },
+      {
+        id: 3, status: "in_progress",
+        created_at: new Date(now - 120_000).toISOString(),
+        run_started_at: new Date(now - 120_000).toISOString(),
+        inputs: { issue_id: "DVA-3", issue_title: "Running task" },
+      },
+      {
+        id: 4, status: "queued",
+        created_at: new Date(now - 30_000).toISOString(),
+        run_started_at: null,
+        inputs: { issue_id: "DVA-4", issue_title: "Queued task" },
+      },
+    ];
+
+    const result = buildGanttData(runs, now);
+
+    assert.equal(result.bars.length, 4, "Should have 4 bars");
+
+    const bar1 = result.bars.find(b => b.issueId === "DVA-1");
+    assert.equal(bar1.status, "success");
+    assert.equal(bar1.color, GANTT_COLORS.success);
+
+    const bar2 = result.bars.find(b => b.issueId === "DVA-2");
+    assert.equal(bar2.status, "failure");
+    assert.equal(bar2.color, GANTT_COLORS.failure);
+
+    const bar3 = result.bars.find(b => b.issueId === "DVA-3");
+    assert.equal(bar3.status, "in_progress");
+    assert.equal(bar3.color, GANTT_COLORS.in_progress);
+
+    const bar4 = result.bars.find(b => b.issueId === "DVA-4");
+    assert.equal(bar4.status, "queued");
+    assert.equal(bar4.color, GANTT_COLORS.queued);
+  });
+
+  it("sorts bars by start time (earliest first)", () => {
+    const now = Date.now();
+    const runs = [
+      {
+        id: 2, status: "completed", conclusion: "success",
+        created_at: new Date(now - 100_000).toISOString(),
+        run_started_at: new Date(now - 100_000).toISOString(),
+        updated_at: new Date(now - 50_000).toISOString(),
+        inputs: { issue_id: "DVA-B", issue_title: "Later" },
+      },
+      {
+        id: 1, status: "completed", conclusion: "success",
+        created_at: new Date(now - 500_000).toISOString(),
+        run_started_at: new Date(now - 500_000).toISOString(),
+        updated_at: new Date(now - 400_000).toISOString(),
+        inputs: { issue_id: "DVA-A", issue_title: "Earlier" },
+      },
+    ];
+
+    const result = buildGanttData(runs, now);
+    assert.equal(result.bars[0].issueId, "DVA-A", "Earlier bar should come first");
+    assert.equal(result.bars[1].issueId, "DVA-B", "Later bar should come second");
+  });
+
+  it("computes correct minTime and maxTime", () => {
+    const now = Date.now();
+    const startMs = now - 600_000;
+    const endMs = now - 100_000;
+    const runs = [
+      {
+        id: 1, status: "completed", conclusion: "success",
+        created_at: new Date(startMs).toISOString(),
+        run_started_at: new Date(startMs).toISOString(),
+        updated_at: new Date(endMs).toISOString(),
+        inputs: { issue_id: "DVA-1" },
+      },
+    ];
+
+    const result = buildGanttData(runs, now);
+    assert.equal(result.minTime, startMs);
+    assert.equal(result.maxTime, endMs);
+  });
+
+  it("extends in-progress bars to current time", () => {
+    const now = Date.now();
+    const startMs = now - 300_000;
+    const runs = [
+      {
+        id: 1, status: "in_progress",
+        created_at: new Date(startMs).toISOString(),
+        run_started_at: new Date(startMs).toISOString(),
+        inputs: { issue_id: "DVA-1" },
+      },
+    ];
+
+    const result = buildGanttData(runs, now);
+    assert.equal(result.bars[0].endMs, now, "In-progress bar should extend to now");
+  });
+
+  it("includes duration string in each bar", () => {
+    const now = Date.now();
+    const runs = [
+      {
+        id: 1, status: "completed", conclusion: "success",
+        created_at: new Date(now - 450_000).toISOString(),
+        run_started_at: new Date(now - 450_000).toISOString(),
+        updated_at: new Date(now - 0).toISOString(),
+        inputs: { issue_id: "DVA-1" },
+      },
+    ];
+
+    const result = buildGanttData(runs, now);
+    assert.ok(result.bars[0].duration, "Bar should have a duration string");
+    assert.ok(/\d+m \d+s/.test(result.bars[0].duration), "Duration should match Nm Ns format");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gantt Chart — buildDashboardData includes gantt
+// ---------------------------------------------------------------------------
+
+describe("buildDashboardData — includes gantt data", () => {
+  it("includes gantt field in dashboard data", () => {
+    const data = buildDashboardData(makeMockRaw());
+    assert.ok(data.gantt, "Dashboard data should include gantt");
+    assert.ok(Array.isArray(data.gantt.bars), "gantt should have bars array");
+    assert.ok(typeof data.gantt.minTime === "number", "gantt should have minTime");
+    assert.ok(typeof data.gantt.maxTime === "number", "gantt should have maxTime");
+  });
+
+  it("gantt bars match the number of runs in mock data", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    // Mock has 4 runs (2 active + 2 completed)
+    assert.equal(data.gantt.bars.length, 4, "Should have 4 gantt bars");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gantt Chart — HTML rendering includes gantt elements
+// ---------------------------------------------------------------------------
+
+describe("generateDashboardHTML — includes Gantt chart elements", () => {
+  it("includes gantt-chart container div", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes('id="gantt-chart"'), "Web HTML should have gantt-chart div");
+  });
+
+  it("includes Workflow Timeline section label", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("Workflow Timeline"), "Web HTML should have Workflow Timeline label");
+  });
+
+  it("includes gantt CSS classes", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes(".gantt-bar"), "Web HTML should have .gantt-bar CSS");
+    assert.ok(html.includes(".gantt-legend"), "Web HTML should have .gantt-legend CSS");
+    assert.ok(html.includes(".gantt-row"), "Web HTML should have .gantt-row CSS");
+  });
+
+  it("includes renderGanttChart function", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("renderGanttChart"), "Web HTML should have renderGanttChart function");
+  });
+});
+
+describe("generateStaticHTML — includes Gantt chart elements", () => {
+  it("includes gantt-chart container div", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(html.includes('id="gantt-chart"'), "Static HTML should have gantt-chart div");
+  });
+
+  it("includes Workflow Timeline section label", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(html.includes("Workflow Timeline"), "Static HTML should have Workflow Timeline label");
+  });
+
+  it("includes renderGanttChart function and invocation", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(html.includes("renderGanttChart"), "Static HTML should have renderGanttChart function");
+    assert.ok(html.includes("gantt-chart"), "Static HTML should render gantt chart");
+  });
+
+  it("embeds gantt data in DASHBOARD_DATA payload", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(html.includes('"bars"'), "Static HTML should embed gantt bars in data payload");
+    assert.ok(html.includes('"minTime"'), "Static HTML should embed gantt minTime in data payload");
+  });
+
+  it("includes gantt CSS classes in static HTML", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(html.includes(".gantt-bar"), "Static HTML should have .gantt-bar CSS");
+    assert.ok(html.includes(".gantt-legend"), "Static HTML should have .gantt-legend CSS");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gantt Chart — CLI rendering includes gantt section
+// ---------------------------------------------------------------------------
+
+describe("renderDashboard — includes Gantt chart section", () => {
+  it("shows WORKFLOW TIMELINE header when gantt has bars", () => {
+    const data = buildDashboardData(makeMockRaw());
+    const output = renderDashboard(data);
+    assert.ok(output.includes("WORKFLOW TIMELINE"), "CLI output should have WORKFLOW TIMELINE header");
+  });
+
+  it("shows issue IDs in gantt section", () => {
+    const data = buildDashboardData(makeMockRaw());
+    const output = renderDashboard(data);
+    // The gantt should include some of the issue IDs from mock data
+    assert.ok(output.includes("DVA-55") || output.includes("DVA-50"),
+      "CLI gantt should show issue IDs");
+  });
+
+  it("shows bar characters in gantt section", () => {
+    const data = buildDashboardData(makeMockRaw());
+    const output = renderDashboard(data);
+    assert.ok(output.includes("█"), "CLI gantt should show bar block characters");
+  });
+
+  it("shows legend with status labels", () => {
+    const data = buildDashboardData(makeMockRaw());
+    const output = renderDashboard(data);
+    assert.ok(output.includes("Success"), "CLI gantt legend should include Success");
+    assert.ok(output.includes("Failed"), "CLI gantt legend should include Failed");
+    assert.ok(output.includes("Running"), "CLI gantt legend should include Running");
+    assert.ok(output.includes("Queued"), "CLI gantt legend should include Queued");
+  });
+
+  it("does not show gantt section when no runs", () => {
+    const data = buildDashboardData({ runs: [], prs: [] });
+    const output = renderDashboard(data);
+    assert.ok(!output.includes("WORKFLOW TIMELINE"),
+      "CLI should not show WORKFLOW TIMELINE with empty runs");
   });
 });

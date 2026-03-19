@@ -326,12 +326,57 @@ export function generateStaticHTML(data) {
   .when { color: #8b949e; }
   .check { font-size: 16px; }
   .footer { color: #8b949e; font-size: 12px; padding-top: 16px; border-top: 1px solid #21262d; }
+  .gantt-panel { margin-bottom: 24px; }
+  .gantt-chart {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 16px; overflow-x: auto;
+  }
+  .gantt-axis {
+    display: flex; justify-content: space-between;
+    color: #8b949e; font-size: 11px; padding: 0 0 8px 120px;
+    border-bottom: 1px solid #21262d; margin-bottom: 8px;
+  }
+  .gantt-rows { min-width: 600px; }
+  .gantt-row {
+    display: flex; align-items: center; padding: 4px 0;
+    border-bottom: 1px solid #161b22;
+  }
+  .gantt-row:hover { background: rgba(88, 166, 255, 0.04); }
+  .gantt-label {
+    width: 120px; min-width: 120px; font-size: 12px;
+    color: #58a6ff; font-weight: 500; padding-right: 8px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .gantt-track {
+    flex: 1; position: relative; height: 22px;
+    background: rgba(48, 54, 61, 0.3); border-radius: 3px;
+  }
+  .gantt-bar {
+    position: absolute; top: 2px; bottom: 2px; border-radius: 3px;
+    min-width: 4px; cursor: default; transition: opacity 0.2s;
+  }
+  .gantt-bar:hover { opacity: 0.85; }
+  .gantt-bar-text {
+    position: absolute; left: 6px; top: 50%; transform: translateY(-50%);
+    font-size: 10px; color: #fff; white-space: nowrap;
+    pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  }
+  .gantt-legend {
+    display: flex; gap: 16px; margin-top: 12px; padding-top: 8px;
+    border-top: 1px solid #21262d;
+  }
+  .gantt-legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #8b949e; }
+  .gantt-legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+  .gantt-empty { color: #8b949e; font-style: italic; padding: 16px; text-align: center; }
   @media (max-width: 768px) {
     .gauges { flex-wrap: wrap; }
     .gauge { flex: 1 1 45%; min-width: 140px; }
     table { display: block; overflow-x: auto; }
     .agent-top { flex-direction: column; align-items: flex-start; gap: 8px; }
     .agent-right { flex-wrap: wrap; }
+    .gantt-label { width: 80px; min-width: 80px; font-size: 11px; }
+    .gantt-axis { padding-left: 80px; }
+    .gantt-bar-text { display: none; }
   }
 </style>
 </head>
@@ -354,6 +399,10 @@ export function generateStaticHTML(data) {
   <div class="history">
     <div class="section-label">Recent Runs</div>
     <div id="history-table"></div>
+  </div>
+  <div class="gantt-panel">
+    <div class="section-label">Workflow Timeline</div>
+    <div id="gantt-chart"></div>
   </div>
   <div class="footer" id="footer"></div>
 </div>
@@ -480,11 +529,60 @@ function toggleRecoveryDetail(level) {
   if (el) el.classList.toggle('open');
 }
 
+function renderGanttChart(gantt) {
+  if (!gantt || !gantt.bars || gantt.bars.length === 0) {
+    return '<div class="gantt-empty">No workflow runs to display</div>';
+  }
+  var bars = gantt.bars;
+  var minTime = gantt.minTime;
+  var maxTime = gantt.maxTime;
+  var range = maxTime - minTime || 1;
+
+  var axisCount = 5;
+  var axisLabels = [];
+  for (var i = 0; i < axisCount; i++) {
+    var t = minTime + (range * i / (axisCount - 1));
+    var d = new Date(t);
+    axisLabels.push(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+  }
+  var axisHtml = '<div class="gantt-axis">' + axisLabels.map(function(l) {
+    return '<span>' + escapeHtml(l) + '</span>';
+  }).join('') + '</div>';
+
+  var rowsHtml = bars.map(function(bar) {
+    var leftPct = Math.max(0, ((bar.startMs - minTime) / range) * 100);
+    var widthPct = Math.max(0.5, ((bar.endMs - bar.startMs) / range) * 100);
+    var barTitle = escapeHtml(bar.issueId + ': ' + bar.issueTitle + ' (' + bar.duration + ')');
+    var textHtml = widthPct > 8
+      ? '<span class="gantt-bar-text">' + escapeHtml(bar.duration) + '</span>'
+      : '';
+    return '<div class="gantt-row">'
+      + '<div class="gantt-label" title="' + escapeHtml(bar.issueTitle) + '">' + escapeHtml(bar.issueId) + '</div>'
+      + '<div class="gantt-track">'
+      + '<div class="gantt-bar" style="left:' + leftPct.toFixed(2) + '%;width:' + widthPct.toFixed(2) + '%;background:' + bar.color + '" title="' + barTitle + '">'
+      + textHtml
+      + '</div></div></div>';
+  }).join('');
+
+  var legendItems = [
+    { color: '#3fb950', label: 'Success' },
+    { color: '#f85149', label: 'Failed' },
+    { color: '#58a6ff', label: 'In Progress' },
+    { color: '#d29922', label: 'Queued' },
+  ];
+  var legendHtml = '<div class="gantt-legend">' + legendItems.map(function(item) {
+    return '<div class="gantt-legend-item"><div class="gantt-legend-dot" style="background:' + item.color + '"></div>' + item.label + '</div>';
+  }).join('') + '</div>';
+
+  return '<div class="gantt-chart">' + axisHtml + '<div class="gantt-rows">' + rowsHtml + '</div>' + legendHtml + '</div>';
+}
+
 document.getElementById('gauges').innerHTML = renderGauges(DASHBOARD_DATA.gauges);
 document.getElementById('runner-health').innerHTML = renderRunnerHealth(DASHBOARD_DATA.runnerHealth);
 document.getElementById('recovery-panel').innerHTML = renderRecoveryPanel(DASHBOARD_DATA.recoveryLevels);
 document.getElementById('agents-list').innerHTML = renderAgents(DASHBOARD_DATA.activeAgents);
 document.getElementById('history-table').innerHTML = renderHistory(DASHBOARD_DATA.history);
+document.getElementById('gantt-chart').innerHTML = renderGanttChart(DASHBOARD_DATA.gantt);
 document.getElementById('build-time').textContent = 'Built: ' + new Date(DASHBOARD_DATA.buildTime).toLocaleString();
 </script>
 </body>
