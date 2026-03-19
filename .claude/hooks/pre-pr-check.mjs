@@ -77,8 +77,11 @@ try {
     process.exit(0);
   }
 
-  // Check if the command includes --force or --skip-review override
-  if (/--force\b|--skip-review\b/.test(command)) {
+  // Check if the command includes SKIP_PR_REVIEW=1 env var prefix.
+  // We use an env var instead of CLI flags because PreToolUse hooks cannot
+  // modify the command — flags like --force would be passed through to gh,
+  // which doesn't recognise them and would fail (see DVA-64).
+  if (/\bSKIP_PR_REVIEW=1\b/.test(command)) {
     process.exit(0);
   }
 
@@ -114,9 +117,9 @@ try {
       "",
       "This checks: tests, security, conventions, code quality, and diff size.",
       "If all gates pass, proceed with the PR creation.",
-      "If gates fail, fix the issues first or use --force to override for urgent fixes.",
+      "If gates fail, fix the issues first.",
       "",
-      "To skip this check, add --force to your gh pr create command.",
+      "To skip this check, prefix with: SKIP_PR_REVIEW=1 gh pr create ...",
     ].join("\n"),
   };
 
