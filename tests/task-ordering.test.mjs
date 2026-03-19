@@ -369,6 +369,23 @@ describe("findNextTask", () => {
     assert.equal(blockedTasks[0].identifier, "DVA-2");
   });
 
+  it("filters by status when statuses option is provided", () => {
+    const issues = [
+      makeIssue("a", "DVA-1", "Backlog task (high)", 1, "Backlog"),
+      makeIssue("b", "DVA-2", "Todo task (medium)", 3, "Todo"),
+    ];
+
+    const graph = buildGraph(issues);
+
+    // Without filter: Backlog task wins (higher priority)
+    const { task: defaultTask } = findNextTask(graph);
+    assert.equal(defaultTask.identifier, "DVA-1");
+
+    // With --status todo: skips Backlog, picks Todo task
+    const { task: filteredTask } = findNextTask(graph, { statuses: ["todo"] });
+    assert.equal(filteredTask.identifier, "DVA-2");
+  });
+
   it("treats resolved blockers as non-blocking", () => {
     const issues = [
       makeIssue("a", "DVA-1", "Done blocker", 3, "Done"),
