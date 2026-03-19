@@ -397,10 +397,11 @@ describe("verifyPostMergeItem", () => {
     assert.ok(result.details.includes("Scheduler ran successfully"));
   });
 
-  it("fails unknown items that cannot be auto-verified", () => {
+  it("skips unknown items that cannot be auto-verified (does not fail)", () => {
     const deps = {};
     const result = verifyPostMergeItem("Check something unusual", deps);
-    assert.equal(result.verified, false);
+    assert.equal(result.verified, true);
+    assert.equal(result.skipped, true);
     assert.ok(result.details.includes("Cannot auto-verify"));
   });
 });

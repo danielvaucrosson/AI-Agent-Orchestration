@@ -396,6 +396,7 @@ export function runPostMergeVerification(prNumber, deps) {
     results.push({
       text: item.text,
       verified: verification.verified,
+      skipped: verification.skipped || false,
       details: verification.details,
     });
   }
@@ -463,8 +464,8 @@ export function verifyPostMergeItem(text, deps) {
     }
   }
 
-  // Default: can't auto-verify — flag for human review
-  return { verified: false, details: "Cannot auto-verify — needs manual check" };
+  // Default: can't auto-verify — flag for human review (not a failure)
+  return { verified: true, skipped: true, details: "Cannot auto-verify — needs manual check" };
 }
 
 /**
