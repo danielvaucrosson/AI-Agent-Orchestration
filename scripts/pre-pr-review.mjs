@@ -633,17 +633,13 @@ Exit codes:
     }
   }
 
-  // Summary line (stderr when --json so stdout stays parseable)
+  // Summary line
   const { summary } = result;
-  const summaryLine =
+  console.log(
     `\nReview: ${summary.passed}/${summary.total} gates passed` +
     (summary.warned > 0 ? `, ${summary.warned} warning(s)` : "") +
-    (summary.failed > 0 ? `, ${summary.failed} FAILED` : "");
-  if (flags.json) {
-    console.error(summaryLine);
-  } else {
-    console.log(summaryLine);
-  }
+    (summary.failed > 0 ? `, ${summary.failed} FAILED` : "")
+  );
 
   // Write marker file when review passes (used by pre-pr-check hook)
   if (result.overall !== "fail" || flags.force) {
