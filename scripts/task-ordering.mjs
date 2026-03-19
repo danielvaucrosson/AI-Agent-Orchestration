@@ -291,15 +291,19 @@ export function topologicalSort(graph) {
  * Find the next task to work on: the highest-priority unblocked actionable issue.
  *
  * @param {{ nodes: Map, edges: Map }} graph
+ * @param {{ statuses?: string[] }} [options] - Optional filters
+ * @param {string[]} [options.statuses] - Allowed statuses (default: ACTIONABLE_STATUSES)
  * @returns {{ task: object|null, reason: string, blockedTasks: object[] }}
  */
-export function findNextTask(graph) {
+export function findNextTask(graph, options = {}) {
   const filtered = filterResolvedBlockers(graph);
   const { ordered } = topologicalSort(filtered);
 
-  // Filter to actionable statuses (backlog, todo)
+  const allowedStatuses = options.statuses || ACTIONABLE_STATUSES;
+
+  // Filter to allowed statuses
   const actionable = ordered.filter((node) =>
-    ACTIONABLE_STATUSES.includes(node.statusLower)
+    allowedStatuses.includes(node.statusLower)
   );
 
   if (actionable.length === 0) {
@@ -531,6 +535,8 @@ function parseFlags(argv) {
       flags.project = argv[++i];
     } else if (arg === "--label") {
       flags.label = argv[++i];
+    } else if (arg === "--status") {
+      flags.status = argv[++i];
     } else if (arg === "--json") {
       flags.json = true;
     } else if (arg === "--help" || arg === "-h") {
@@ -559,11 +565,13 @@ Options:
   --team <key>        Filter by team key (e.g., DVA)
   --project <name>    Filter by project name
   --label <name>      Filter by label
+  --status <list>     Comma-separated statuses for "next" (default: backlog,todo)
   --json              Output results as JSON
   --help              Show this help message
 
 Examples:
   node scripts/task-ordering.mjs next --team DVA
+  node scripts/task-ordering.mjs next --team DVA --status todo
   node scripts/task-ordering.mjs check DVA-18
   node scripts/task-ordering.mjs order --project "Agent Orchestration"
   node scripts/task-ordering.mjs graph --team DVA
@@ -610,7 +618,10 @@ if (isMain) {
 
     switch (flags.command) {
       case "next": {
-        const result = findNextTask(graph);
+        const statusOpts = flags.status
+          ? { statuses: flags.status.split(",").map((s) => s.trim().toLowerCase()) }
+          : {};
+        const result = findNextTask(graph, statusOpts);
         if (flags.json) {
           console.log(JSON.stringify(result, null, 2));
         } else if (result.task) {

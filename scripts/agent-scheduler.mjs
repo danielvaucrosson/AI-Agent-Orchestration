@@ -210,9 +210,9 @@ Outputs (for GitHub Actions):
         `Rate limit OK: ${rateCheck.currentCount}/${rateCheck.maxDaily} runs in last 24h`
       );
 
-      // 2. Get ordered tasks from task-ordering.mjs
+      // 2. Get ordered tasks from task-ordering.mjs (Todo-only — Backlog isn't ready)
       const taskOutput = execSync(
-        `node scripts/task-ordering.mjs next --team ${args.team} --json`,
+        `node scripts/task-ordering.mjs next --team ${args.team} --status todo --json`,
         { encoding: "utf8", cwd: process.cwd() }
       );
       const taskResult = JSON.parse(taskOutput);
