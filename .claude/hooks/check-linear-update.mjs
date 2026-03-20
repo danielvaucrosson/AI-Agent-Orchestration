@@ -73,15 +73,19 @@ function readStdin() {
 
 const TERMINAL_STATES = ["done", "canceled", "cancelled", "duplicate"];
 
+// States where the GitHub Action (or another process) has already updated
+// Linear, so the agent does not need to update it manually.
+const ALREADY_UPDATED_STATES = ["in review", ...TERMINAL_STATES];
+
 /**
- * Checks if the Linear issue is in a terminal state (Done, Canceled, Duplicate).
- * Queries the Linear API directly. Returns true if terminal, false otherwise.
- * Falls back to false if the API key is missing or the request fails.
+ * Fetches the current Linear issue state name (lowercased).
+ * Returns "" if the API key is missing, the request fails, or the issue
+ * is not found.
  */
-async function isIssueTerminal(issueId) {
+async function getIssueState(issueId) {
   try {
     const apiKey = process.env.LINEAR_API_KEY || "";
-    if (!apiKey) return false;
+    if (!apiKey) return "";
 
     const safeId = issueId.replace(/[^A-Za-z0-9-]/g, "");
     const [teamKey, num] = safeId.split("-");
@@ -99,13 +103,12 @@ async function isIssueTerminal(issueId) {
       body: JSON.stringify({ query }),
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) return false;
+    if (!res.ok) return "";
 
     const json = await res.json();
-    const stateName = json?.data?.issues?.nodes?.[0]?.state?.name || "";
-    return TERMINAL_STATES.includes(stateName.toLowerCase());
+    return (json?.data?.issues?.nodes?.[0]?.state?.name || "").toLowerCase();
   } catch {
-    return false;
+    return "";
   }
 }
 
@@ -132,16 +135,22 @@ try {
     process.exit(0);
   }
 
-  // If the issue is already Done/Canceled, skip all reminders
-  const terminalStatus = await isIssueTerminal(issueId);
-  if (terminalStatus) {
+  // Query the actual Linear state to avoid redundant reminders
+  const issueState = await getIssueState(issueId);
+
+  // If the issue is already Done/Canceled/Duplicate, skip all reminders
+  if (TERMINAL_STATES.includes(issueState)) {
     process.exit(0);
   }
 
   const lastMsg = data.last_assistant_message || "";
 
-  // Check if the agent already mentioned updating Linear
-  const alreadyUpdated = UPDATED_PATTERNS.some((re) => re.test(lastMsg));
+  // Check if the agent already mentioned updating Linear, OR if the issue
+  // is already in a state that means Linear was updated externally (e.g.
+  // GitHub Action moved it to "In Review" after PR creation).
+  const alreadyUpdated =
+    UPDATED_PATTERNS.some((re) => re.test(lastMsg)) ||
+    ALREADY_UPDATED_STATES.includes(issueState);
 
   // Check if the task appears complete
   const taskComplete = COMPLETED_PATTERNS.some((re) => re.test(lastMsg));

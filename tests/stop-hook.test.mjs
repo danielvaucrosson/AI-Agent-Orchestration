@@ -91,6 +91,10 @@ const HANDOFF_PATTERNS = [
 
 const TERMINAL_STATES = ["done", "canceled", "cancelled", "duplicate"];
 
+// States where the GitHub Action (or another process) has already updated
+// Linear — the hook should skip the Linear update reminder for these.
+const ALREADY_UPDATED_STATES = ["in review", ...TERMINAL_STATES];
+
 // ---------------------------------------------------------------------------
 // Section 1: Pure pattern-matching logic
 // ---------------------------------------------------------------------------
@@ -198,6 +202,29 @@ describe("TERMINAL_STATES", () => {
 
   it("does NOT include 'in progress'", () => {
     assert.ok(!TERMINAL_STATES.includes("in progress"));
+  });
+});
+
+describe("ALREADY_UPDATED_STATES", () => {
+  it("includes 'in review'", () => {
+    assert.ok(ALREADY_UPDATED_STATES.includes("in review"));
+  });
+
+  it("includes all terminal states", () => {
+    for (const state of TERMINAL_STATES) {
+      assert.ok(
+        ALREADY_UPDATED_STATES.includes(state),
+        `ALREADY_UPDATED_STATES should include terminal state '${state}'`,
+      );
+    }
+  });
+
+  it("does NOT include 'in progress'", () => {
+    assert.ok(!ALREADY_UPDATED_STATES.includes("in progress"));
+  });
+
+  it("does NOT include 'backlog'", () => {
+    assert.ok(!ALREADY_UPDATED_STATES.includes("backlog"));
   });
 });
 
