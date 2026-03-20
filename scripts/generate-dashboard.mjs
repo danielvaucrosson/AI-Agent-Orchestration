@@ -368,6 +368,46 @@ export function generateStaticHTML(data) {
   .gantt-legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #8b949e; }
   .gantt-legend-dot { width: 10px; height: 10px; border-radius: 2px; }
   .gantt-empty { color: #8b949e; font-style: italic; padding: 16px; text-align: center; }
+  /* Failure heatmap (DVA-56) */
+  .heatmap-panel { margin-bottom: 24px; }
+  .heatmap-controls { display: flex; gap: 8px; margin-bottom: 12px; }
+  .heatmap-btn {
+    background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 4px 12px; border-radius: 6px; font-size: 12px;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .heatmap-btn:hover { border-color: #58a6ff; }
+  .heatmap-btn.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  .heatmap-grid {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 16px; overflow-x: auto;
+  }
+  .heatmap-table { border-collapse: collapse; }
+  .heatmap-table td, .heatmap-table th { padding: 0; }
+  .heatmap-day-label { font-size: 11px; color: #8b949e; text-align: right; padding-right: 8px; width: 36px; }
+  .heatmap-hour-label { font-size: 10px; color: #8b949e; text-align: center; padding-bottom: 4px; width: 24px; }
+  .heatmap-cell {
+    width: 22px; height: 22px; margin: 1px; border-radius: 3px;
+    cursor: default; position: relative; transition: transform 0.1s;
+  }
+  .heatmap-cell:hover { transform: scale(1.3); z-index: 1; }
+  .heatmap-tooltip {
+    display: none; position: absolute; bottom: 100%; left: 50%;
+    transform: translateX(-50%); background: #1c2128; border: 1px solid #30363d;
+    border-radius: 6px; padding: 8px 10px; white-space: nowrap;
+    font-size: 11px; color: #c9d1d9; z-index: 10;
+    pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .heatmap-cell:hover .heatmap-tooltip { display: block; }
+  .heatmap-tooltip-title { font-weight: 600; margin-bottom: 4px; }
+  .heatmap-tooltip-tasks { color: #8b949e; }
+  .heatmap-legend {
+    display: flex; align-items: center; gap: 4px; margin-top: 12px;
+    padding-top: 8px; border-top: 1px solid #21262d; font-size: 11px; color: #8b949e;
+  }
+  .heatmap-legend-box { width: 14px; height: 14px; border-radius: 2px; }
+  .heatmap-legend-label { margin: 0 8px 0 2px; }
+  .heatmap-empty { color: #8b949e; font-style: italic; padding: 16px; text-align: center; }
   @media (max-width: 768px) {
     .gauges { flex-wrap: wrap; }
     .gauge { flex: 1 1 45%; min-width: 140px; }
@@ -377,6 +417,8 @@ export function generateStaticHTML(data) {
     .gantt-label { width: 80px; min-width: 80px; font-size: 11px; }
     .gantt-axis { padding-left: 80px; }
     .gantt-bar-text { display: none; }
+    .heatmap-cell { width: 16px; height: 16px; }
+    .heatmap-hour-label { font-size: 9px; width: 18px; }
   }
 </style>
 </head>
@@ -404,6 +446,7 @@ export function generateStaticHTML(data) {
     <div class="section-label">Workflow Timeline</div>
     <div id="gantt-chart"></div>
   </div>
+  <div id="heatmap-panel"></div>
   <div class="footer" id="footer"></div>
 </div>
 <script>
@@ -580,12 +623,66 @@ function renderGanttChart(gantt) {
   return '<div class="gantt-chart">' + axisHtml + '<div class="gantt-rows">' + rowsHtml + '</div>' + legendHtml + '</div>';
 }
 
+var heatmapMode = 'all';
+var DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+var HEATMAP_COLORS = {
+  failure: ['#161b22', '#3d1214', '#6e1c1f', '#a1282c', '#f85149'],
+  retry:   ['#161b22', '#3d2a0a', '#6e4a11', '#a16b18', '#f0883e'],
+  mixed:   ['#161b22', '#3d1a10', '#6e3218', '#a14a22', '#d2632c']
+};
+
+function renderHeatmap(heatmap) {
+  if (!heatmap || (heatmap.maxFailures === 0 && heatmap.maxRetries === 0)) return '';
+  var btnClass = function(mode) { return 'heatmap-btn' + (heatmapMode === mode ? ' active' : ''); };
+  var controls = '<div class="heatmap-controls">'
+    + '<button class="' + btnClass('all') + '" onclick="setHeatmapMode(\'all\')">All Events</button>'
+    + '<button class="' + btnClass('failures') + '" onclick="setHeatmapMode(\'failures\')">First-run Failures</button>'
+    + '<button class="' + btnClass('retries') + '" onclick="setHeatmapMode(\'retries\')">Retries</button></div>';
+  var maxVal = heatmapMode === 'failures' ? Math.max(heatmap.maxFailures, 1)
+    : heatmapMode === 'retries' ? Math.max(heatmap.maxRetries, 1)
+    : Math.max(heatmap.maxFailures, heatmap.maxRetries, 1);
+  var headerRow = '<tr><th></th>';
+  for (var h = 0; h < 24; h++) headerRow += '<th class="heatmap-hour-label">' + h + '</th>';
+  headerRow += '</tr>';
+  var rows = '';
+  for (var d = 0; d < 7; d++) {
+    rows += '<tr><td class="heatmap-day-label">' + DAY_NAMES[d] + '</td>';
+    for (var h2 = 0; h2 < 24; h2++) {
+      var fc = heatmap.failures[d][h2].count;
+      var rc = heatmap.retries[d][h2].count;
+      var val, tasks, palette;
+      if (heatmapMode === 'failures') { val = fc; tasks = heatmap.failures[d][h2].tasks; palette = HEATMAP_COLORS.failure; }
+      else if (heatmapMode === 'retries') { val = rc; tasks = heatmap.retries[d][h2].tasks; palette = HEATMAP_COLORS.retry; }
+      else { val = fc + rc; tasks = heatmap.failures[d][h2].tasks.concat(heatmap.retries[d][h2].tasks); palette = fc > 0 && rc > 0 ? HEATMAP_COLORS.mixed : rc > fc ? HEATMAP_COLORS.retry : HEATMAP_COLORS.failure; }
+      var intensity = val === 0 ? 0 : Math.min(4, Math.ceil((val / maxVal) * 4));
+      var color = palette[intensity];
+      var tooltip = '';
+      if (val > 0) {
+        var taskList = tasks.slice(0, 5).map(function(t) { return escapeHtml(t.issueId) + (t.issueTitle ? ' — ' + escapeHtml(t.issueTitle) : ''); }).join('<br>');
+        if (tasks.length > 5) taskList += '<br>…and ' + (tasks.length - 5) + ' more';
+        tooltip = '<div class="heatmap-tooltip"><div class="heatmap-tooltip-title">' + DAY_NAMES[d] + ' ' + h2 + ':00 UTC — ' + val + ' event' + (val !== 1 ? 's' : '') + '</div><div class="heatmap-tooltip-tasks">' + taskList + '</div></div>';
+      }
+      rows += '<td><div class="heatmap-cell" style="background:' + color + '">' + tooltip + '</div></td>';
+    }
+    rows += '</tr>';
+  }
+  var legendPalette = heatmapMode === 'retries' ? HEATMAP_COLORS.retry : heatmapMode === 'failures' ? HEATMAP_COLORS.failure : HEATMAP_COLORS.mixed;
+  var legend = '<div class="heatmap-legend"><span>Less</span>' + legendPalette.map(function(c) { return '<div class="heatmap-legend-box" style="background:' + c + '"></div>'; }).join('') + '<span class="heatmap-legend-label">More</span></div>';
+  return '<div class="heatmap-panel"><div class="section-label">Failure Heatmap <span style="font-size:10px;text-transform:none;letter-spacing:0">(UTC, day-of-week × hour)</span></div>' + controls + '<div class="heatmap-grid"><table class="heatmap-table">' + headerRow + rows + '</table>' + legend + '</div></div>';
+}
+
+function setHeatmapMode(mode) {
+  heatmapMode = mode;
+  if (DASHBOARD_DATA.heatmap) document.getElementById('heatmap-panel').innerHTML = renderHeatmap(DASHBOARD_DATA.heatmap);
+}
+
 document.getElementById('gauges').innerHTML = renderGauges(DASHBOARD_DATA.gauges);
 document.getElementById('runner-health').innerHTML = renderRunnerHealth(DASHBOARD_DATA.runnerHealth);
 document.getElementById('recovery-panel').innerHTML = renderRecoveryPanel(DASHBOARD_DATA.recoveryLevels);
 document.getElementById('agents-list').innerHTML = renderAgents(DASHBOARD_DATA.activeAgents);
 document.getElementById('history-table').innerHTML = renderHistory(DASHBOARD_DATA.history);
 document.getElementById('gantt-chart').innerHTML = renderGanttChart(DASHBOARD_DATA.gantt);
+if (DASHBOARD_DATA.heatmap) document.getElementById('heatmap-panel').innerHTML = renderHeatmap(DASHBOARD_DATA.heatmap);
 document.getElementById('build-time').textContent = 'Built: ' + new Date(DASHBOARD_DATA.buildTime).toLocaleString();
 </script>
 </body>

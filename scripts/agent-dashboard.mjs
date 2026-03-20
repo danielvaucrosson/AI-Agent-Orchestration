@@ -542,6 +542,78 @@ export function buildGanttData(runs, nowMs = Date.now()) {
 }
 
 // ---------------------------------------------------------------------------
+// Failure heatmap — pure functions (DVA-56)
+// ---------------------------------------------------------------------------
+
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * Build a 7×24 heatmap grid of failure/retry events by day-of-week × hour-of-day.
+ *
+ * Two separate grids are produced:
+ * - `failures`: first-run workflow failures (conclusion === "failure")
+ * - `retries`: recovery events (Level 1 + Level 2 from recovery-events.jsonl)
+ *
+ * Each cell contains { count, tasks: [{ issueId, issueTitle, timestamp }] }.
+ *
+ * @param {object[]} runs - Workflow run objects from GitHub API
+ * @param {object[]} recoveryEvents - Recovery event objects from JSONL file
+ * @returns {{ failures: object[][], retries: object[][], maxFailures: number, maxRetries: number, dayNames: string[] }}
+ */
+export function buildFailureHeatmapData(runs, recoveryEvents) {
+  const makeGrid = () =>
+    Array.from({ length: 7 }, () =>
+      Array.from({ length: 24 }, () => ({ count: 0, tasks: [] }))
+    );
+
+  const failures = makeGrid();
+  const retries = makeGrid();
+
+  // Aggregate first-run failures from completed workflow runs
+  for (const run of runs || []) {
+    if (run.status !== "completed" || run.conclusion !== "failure") continue;
+    const ts = run.updated_at || run.created_at;
+    if (!ts) continue;
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) continue;
+    const day = d.getUTCDay();
+    const hour = d.getUTCHours();
+    const { issueId, issueTitle } = extractRunInfo(run);
+    failures[day][hour].count++;
+    failures[day][hour].tasks.push({ issueId, issueTitle, timestamp: ts });
+  }
+
+  // Aggregate retry events (Level 1 = auto-fix, Level 2 = kill+retry)
+  for (const event of recoveryEvents || []) {
+    if (!event.timestamp) continue;
+    const level = event.level;
+    if (level !== 1 && level !== 2) continue;
+    const d = new Date(event.timestamp);
+    if (isNaN(d.getTime())) continue;
+    const day = d.getUTCDay();
+    const hour = d.getUTCHours();
+    retries[day][hour].count++;
+    retries[day][hour].tasks.push({
+      issueId: event.issueId || "unknown",
+      issueTitle: event.issueTitle || "",
+      timestamp: event.timestamp,
+    });
+  }
+
+  // Compute max values for color scaling
+  let maxFailures = 0;
+  let maxRetries = 0;
+  for (let d = 0; d < 7; d++) {
+    for (let h = 0; h < 24; h++) {
+      if (failures[d][h].count > maxFailures) maxFailures = failures[d][h].count;
+      if (retries[d][h].count > maxRetries) maxRetries = retries[d][h].count;
+    }
+  }
+
+  return { failures, retries, maxFailures, maxRetries, dayNames: DAY_NAMES };
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard data builder
 // ---------------------------------------------------------------------------
 
@@ -621,6 +693,8 @@ export function buildDashboardData(raw) {
 
   const gantt = buildGanttData(runs);
 
+  const heatmap = buildFailureHeatmapData(runs, recoveryEvents || []);
+
   return {
     gauges: {
       running: runningCount,
@@ -635,6 +709,7 @@ export function buildDashboardData(raw) {
     history,
     recoveryLevels: recovery,
     runnerHealth,
+    heatmap,
     gantt,
     // Keep raw references for CLI renderer
     _active: active,
@@ -854,6 +929,44 @@ export function renderDashboard(data, opts = {}) {
     );
   }
 
+  // Failure heatmap (DVA-56)
+  const heatmap = data.heatmap;
+  if (heatmap && (heatmap.maxFailures > 0 || heatmap.maxRetries > 0)) {
+    lines.push("");
+    lines.push(`${C.dim}${"─".repeat(62)}${C.reset}`);
+    lines.push(`${C.red}FAILURE HEATMAP${C.reset}  ${C.dim}(UTC, day-of-week × hour)${C.reset}`);
+    lines.push("");
+
+    // Hour axis header
+    const hourLabels = Array.from({ length: 24 }, (_, i) =>
+      i % 3 === 0 ? String(i).padStart(2, " ") : "  "
+    ).join("");
+    lines.push(`  ${C.dim}     ${hourLabels}${C.reset}`);
+
+    const BLOCKS = [" ", "░", "▒", "▓", "█"];
+    const maxVal = Math.max(heatmap.maxFailures, heatmap.maxRetries, 1);
+
+    for (let d = 0; d < 7; d++) {
+      let row = `  ${C.dim}${heatmap.dayNames[d]}${C.reset}  `;
+      for (let h = 0; h < 24; h++) {
+        const fc = heatmap.failures[d][h].count;
+        const rc = heatmap.retries[d][h].count;
+        const total = fc + rc;
+        if (total === 0) {
+          row += `${C.dim}· ${C.reset}`;
+        } else {
+          const intensity = Math.min(4, Math.ceil((total / maxVal) * 4));
+          const color = rc > fc ? C.orange : C.red;
+          row += `${color}${BLOCKS[intensity]}${BLOCKS[intensity]}${C.reset}`;
+        }
+      }
+      lines.push(row);
+    }
+
+    lines.push("");
+    lines.push(`  ${C.dim}${BLOCKS[1]} low  ${BLOCKS[2]} medium  ${BLOCKS[3]} high  ${BLOCKS[4]} max${C.reset}  ${C.red}■${C.reset} failure  ${C.orange}■${C.reset} retry`);
+  }
+
   // Footer
   lines.push("");
   if (opts.webUrl) {
@@ -1071,10 +1184,61 @@ export function generateDashboardHTML() {
   .gantt-legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #8b949e; }
   .gantt-legend-dot { width: 10px; height: 10px; border-radius: 2px; }
   .gantt-empty { color: #8b949e; font-style: italic; padding: 16px; text-align: center; }
+
+  /* Failure heatmap (DVA-56) */
+  .heatmap-panel { margin-bottom: 24px; }
+  .heatmap-controls { display: flex; gap: 8px; margin-bottom: 12px; }
+  .heatmap-btn {
+    background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 4px 12px; border-radius: 6px; font-size: 12px;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .heatmap-btn:hover { border-color: #58a6ff; }
+  .heatmap-btn.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  .heatmap-grid {
+    background: #161b22; border: 1px solid #30363d; border-radius: 10px;
+    padding: 16px; overflow-x: auto;
+  }
+  .heatmap-table { border-collapse: collapse; }
+  .heatmap-table td, .heatmap-table th { padding: 0; }
+  .heatmap-day-label {
+    font-size: 11px; color: #8b949e; text-align: right;
+    padding-right: 8px; width: 36px;
+  }
+  .heatmap-hour-label {
+    font-size: 10px; color: #8b949e; text-align: center;
+    padding-bottom: 4px; width: 24px;
+  }
+  .heatmap-cell {
+    width: 22px; height: 22px; margin: 1px;
+    border-radius: 3px; cursor: default; position: relative;
+    transition: transform 0.1s;
+  }
+  .heatmap-cell:hover { transform: scale(1.3); z-index: 1; }
+  .heatmap-tooltip {
+    display: none; position: absolute; bottom: 100%; left: 50%;
+    transform: translateX(-50%); background: #1c2128; border: 1px solid #30363d;
+    border-radius: 6px; padding: 8px 10px; white-space: nowrap;
+    font-size: 11px; color: #c9d1d9; z-index: 10;
+    pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  }
+  .heatmap-cell:hover .heatmap-tooltip { display: block; }
+  .heatmap-tooltip-title { font-weight: 600; margin-bottom: 4px; }
+  .heatmap-tooltip-tasks { color: #8b949e; }
+  .heatmap-legend {
+    display: flex; align-items: center; gap: 4px; margin-top: 12px;
+    padding-top: 8px; border-top: 1px solid #21262d; font-size: 11px; color: #8b949e;
+  }
+  .heatmap-legend-box { width: 14px; height: 14px; border-radius: 2px; }
+  .heatmap-legend-label { margin: 0 8px 0 2px; }
+  .heatmap-empty { color: #8b949e; font-style: italic; padding: 16px; text-align: center; }
+
   @media (max-width: 768px) {
     .gantt-label { width: 80px; min-width: 80px; font-size: 11px; }
     .gantt-axis { padding-left: 80px; }
     .gantt-bar-text { display: none; }
+    .heatmap-cell { width: 16px; height: 16px; }
+    .heatmap-hour-label { font-size: 9px; width: 18px; }
   }
 </style>
 </head>
@@ -1102,6 +1266,7 @@ export function generateDashboardHTML() {
     <div class="section-label">Workflow Timeline</div>
     <div id="gantt-chart"></div>
   </div>
+  <div id="heatmap-panel"></div>
 </div>
 <script>
 const REPO_URL = ${JSON.stringify(REPO_URL)};
@@ -1368,6 +1533,97 @@ function renderGanttChart(gantt) {
   return '<div class="gantt-chart">' + axisHtml + '<div class="gantt-rows">' + rowsHtml + '</div>' + legendHtml + '</div>';
 }
 
+let heatmapMode = 'all'; // 'all', 'failures', 'retries'
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const HEATMAP_COLORS = {
+  failure: ['#161b22', '#3d1214', '#6e1c1f', '#a1282c', '#f85149'],
+  retry:   ['#161b22', '#3d2a0a', '#6e4a11', '#a16b18', '#f0883e'],
+  mixed:   ['#161b22', '#3d1a10', '#6e3218', '#a14a22', '#d2632c'],
+};
+
+function renderHeatmap(heatmap) {
+  if (!heatmap || (heatmap.maxFailures === 0 && heatmap.maxRetries === 0)) {
+    return '';
+  }
+
+  const btnClass = function(mode) { return 'heatmap-btn' + (heatmapMode === mode ? ' active' : ''); };
+  let controls = '<div class="heatmap-controls">'
+    + '<button class="' + btnClass('all') + '" onclick="setHeatmapMode(\\\'all\\\')">All Events</button>'
+    + '<button class="' + btnClass('failures') + '" onclick="setHeatmapMode(\\\'failures\\\')">First-run Failures</button>'
+    + '<button class="' + btnClass('retries') + '" onclick="setHeatmapMode(\\\'retries\\\')">Retries</button>'
+    + '</div>';
+
+  // Pick which grid(s) to show based on mode
+  const maxVal = heatmapMode === 'failures' ? Math.max(heatmap.maxFailures, 1)
+    : heatmapMode === 'retries' ? Math.max(heatmap.maxRetries, 1)
+    : Math.max(heatmap.maxFailures, heatmap.maxRetries, 1);
+
+  // Hour header row
+  let headerRow = '<tr><th></th>';
+  for (let h = 0; h < 24; h++) {
+    headerRow += '<th class="heatmap-hour-label">' + h + '</th>';
+  }
+  headerRow += '</tr>';
+
+  // Data rows
+  let rows = '';
+  for (let d = 0; d < 7; d++) {
+    rows += '<tr><td class="heatmap-day-label">' + DAY_NAMES[d] + '</td>';
+    for (let h = 0; h < 24; h++) {
+      const fc = heatmap.failures[d][h].count;
+      const rc = heatmap.retries[d][h].count;
+      let val, tasks, palette;
+      if (heatmapMode === 'failures') {
+        val = fc; tasks = heatmap.failures[d][h].tasks; palette = HEATMAP_COLORS.failure;
+      } else if (heatmapMode === 'retries') {
+        val = rc; tasks = heatmap.retries[d][h].tasks; palette = HEATMAP_COLORS.retry;
+      } else {
+        val = fc + rc;
+        tasks = heatmap.failures[d][h].tasks.concat(heatmap.retries[d][h].tasks);
+        palette = fc > 0 && rc > 0 ? HEATMAP_COLORS.mixed
+          : rc > fc ? HEATMAP_COLORS.retry : HEATMAP_COLORS.failure;
+      }
+      const intensity = val === 0 ? 0 : Math.min(4, Math.ceil((val / maxVal) * 4));
+      const color = palette[intensity];
+
+      let tooltip = '';
+      if (val > 0) {
+        let taskList = tasks.slice(0, 5).map(function(t) {
+          return escapeHtml(t.issueId) + (t.issueTitle ? ' — ' + escapeHtml(t.issueTitle) : '');
+        }).join('<br>');
+        if (tasks.length > 5) taskList += '<br>…and ' + (tasks.length - 5) + ' more';
+        tooltip = '<div class="heatmap-tooltip">'
+          + '<div class="heatmap-tooltip-title">' + DAY_NAMES[d] + ' ' + h + ':00 UTC — ' + val + ' event' + (val !== 1 ? 's' : '') + '</div>'
+          + '<div class="heatmap-tooltip-tasks">' + taskList + '</div></div>';
+      }
+
+      rows += '<td><div class="heatmap-cell" style="background:' + color + '">' + tooltip + '</div></td>';
+    }
+    rows += '</tr>';
+  }
+
+  const legendPalette = heatmapMode === 'retries' ? HEATMAP_COLORS.retry
+    : heatmapMode === 'failures' ? HEATMAP_COLORS.failure : HEATMAP_COLORS.mixed;
+  const legend = '<div class="heatmap-legend">'
+    + '<span>Less</span>'
+    + legendPalette.map(function(c) { return '<div class="heatmap-legend-box" style="background:' + c + '"></div>'; }).join('')
+    + '<span class="heatmap-legend-label">More</span>'
+    + '</div>';
+
+  return '<div class="heatmap-panel">'
+    + '<div class="section-label">Failure Heatmap <span style="font-size:10px;text-transform:none;letter-spacing:0">(UTC, day-of-week × hour)</span></div>'
+    + controls
+    + '<div class="heatmap-grid"><table class="heatmap-table">' + headerRow + rows + '</table>' + legend + '</div></div>';
+}
+
+let _lastHeatmapData = null;
+function setHeatmapMode(mode) {
+  heatmapMode = mode;
+  if (_lastHeatmapData) {
+    document.getElementById('heatmap-panel').innerHTML = renderHeatmap(_lastHeatmapData);
+  }
+}
+
 async function refresh() {
   try {
     const res = await fetch('/api/status');
@@ -1379,6 +1635,8 @@ async function refresh() {
     document.getElementById('agents-list').innerHTML = renderAgents(data.activeAgents);
     document.getElementById('history-table').innerHTML = renderHistory(data.history);
     document.getElementById('gantt-chart').innerHTML = renderGanttChart(data.gantt);
+    _lastHeatmapData = data.heatmap;
+    document.getElementById('heatmap-panel').innerHTML = renderHeatmap(data.heatmap);
     document.getElementById('last-update').textContent =
       'Updated: ' + new Date().toLocaleTimeString();
   } catch (err) {
