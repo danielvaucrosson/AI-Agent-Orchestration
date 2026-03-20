@@ -9,9 +9,9 @@ Tasks are managed in Linear and executed by AI agents via Claude Code. Work is d
 
 ### Workflow Protocol
 
-When you receive a task referencing a Linear issue (e.g., DVA-5), or are asked to pick up work:
+When you receive a task, pick up work, or discover a bug/issue during a session:
 
-0. **Ensure a Linear issue exists.** If you're fixing a bug or making a change that doesn't have a Linear issue yet, create one first using the Linear MCP `save_issue` tool. Use the `Bug` label for bugs and appropriate labels for other work. Unless specified otherwise, add all new issues to the **Agent Orchestration** project. All changes must be tracked in Linear.
+0. **Ensure a Linear issue exists — BEFORE writing any code.** This applies to all work: assigned tasks, bugs found during investigation, improvements discovered mid-session, or any change that will result in a PR. Create the issue first using the Linear MCP `save_issue` tool. Use the `Bug` label for bugs and appropriate labels for other work. Unless specified otherwise, add all new issues to the **Agent Orchestration** project. All changes must be tracked in Linear. The pre-PR hook will block PR creation if the branch doesn't contain a Linear issue ID.
 
 1. **Move the issue to "In Progress".** Use the Linear MCP `update_issue` tool:
    - Set `id` to the issue identifier (e.g., `DVA-5`)

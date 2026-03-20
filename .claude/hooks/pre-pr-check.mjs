@@ -85,6 +85,39 @@ try {
     process.exit(0);
   }
 
+  // Check that the current branch contains a Linear issue ID (e.g., DVA-123).
+  // This enforces the workflow protocol: every PR must be linked to a Linear issue.
+  try {
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", {
+      encoding: "utf-8",
+      cwd: GIT_ROOT,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+
+    if (!/DVA-\d+/i.test(branch)) {
+      const result = {
+        decision: "block",
+        reason: [
+          "⚠️  Branch name does not contain a Linear issue ID (e.g., DVA-123).",
+          "",
+          `Current branch: ${branch}`,
+          "",
+          "Every PR must be linked to a Linear issue. Before creating a PR:",
+          "",
+          "  1. Create a Linear issue (use Linear MCP save_issue tool)",
+          "  2. Create a branch with the issue ID: feature/DVA-<N>-description or fix/DVA-<N>-description",
+          "  3. Move your changes to the new branch",
+          "",
+          "To skip this check, prefix with: SKIP_PR_REVIEW=1 gh pr create ...",
+        ].join("\n"),
+      };
+      console.log(JSON.stringify(result));
+      process.exit(0);
+    }
+  } catch {
+    // If branch detection fails, don't block
+  }
+
   // Check if the review has already been run and passed.
   // Look in both the local root and the main repo root (for worktrees).
   for (const markerPath of MARKER_PATHS) {

@@ -528,7 +528,7 @@ describe("reviewPR", () => {
 
     const result = reviewPR(42, deps);
     assert.equal(result.action, "changes-requested");
-    assert.ok(actions.some((a) => a.includes("pr comment 42")));
+    assert.ok(actions.some((a) => a.includes("pr review 42 --request-changes")));
     assert.ok(actions.some((a) => a.includes("agent-actionable")));
   });
 

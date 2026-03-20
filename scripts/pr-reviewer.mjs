@@ -287,7 +287,18 @@ export function approvePR(prNumber, deps) {
  */
 export function requestChangesPR(prNumber, comment, deps) {
   const execFn = deps.exec;
-  ghComment(prNumber, comment, execFn);
+  // Submit a formal review with REQUEST_CHANGES so the pr-feedback workflow
+  // triggers on the pull_request_review event (not just a plain comment).
+  if (execFn) {
+    execFn(`gh pr review ${prNumber} --request-changes --body-file -<<__BODY__\n${comment}\n__BODY__`);
+  } else {
+    execSync(`gh pr review ${prNumber} --request-changes --body-file -`, {
+      encoding: "utf-8",
+      cwd: PROJECT_ROOT,
+      input: comment,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  }
   // Add agent-actionable label so worker agent can pick up feedback
   gh(`pr edit ${prNumber} --add-label "agent-actionable"`, execFn);
 }
