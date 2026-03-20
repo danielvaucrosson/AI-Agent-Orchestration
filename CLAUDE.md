@@ -215,6 +215,17 @@ The lead agent can also use Linear MCP tools directly for sub-issue creation and
 
 Worker agents should run `node scripts/pre-pr-review.mjs` on their sub-task branch before marking the sub-issue as Done.
 
+**Cross-repo orchestrator** (`scripts/cross-repo.mjs`) — coordinate changes across multiple repositories:
+```bash
+node scripts/cross-repo.mjs init         DVA-20 '<repos-json>'  # Clone repos, create branches
+node scripts/cross-repo.mjs status       DVA-20                  # Check all repo statuses
+node scripts/cross-repo.mjs create-prs   DVA-20                  # Create PRs, link to Linear
+node scripts/cross-repo.mjs merge-order  DVA-20                  # Show dependency-aware merge order
+node scripts/cross-repo.mjs flag         DVA-20 <repo-name>      # Flag related PRs on failure
+```
+
+Use when a feature requires synchronized changes in 2+ repositories. See the orchestration decision framework (Level 4) for guidance on when to use this vs. single-repo orchestration.
+
 ## Style Preferences
 
 - Never wrap URLs/links in bold (`**`). Bold markdown breaks URL selection on mobile.
