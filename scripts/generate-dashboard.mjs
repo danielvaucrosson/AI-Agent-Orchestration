@@ -303,6 +303,32 @@ export function generateStaticHTML(data) {
   .agent-meta { color: #8b949e; font-size: 12px; margin-top: 6px; }
   .agent-meta span { color: #c9d1d9; }
   .empty-state { color: #8b949e; font-style: italic; padding: 16px 0; }
+  .pulse-pill {
+    padding: 2px 6px; border-radius: 4px; font-size: 10px;
+    font-weight: 600; margin-left: 8px; display: inline-block;
+  }
+  .pulse-pill-1 { background: rgba(210, 153, 34, 0.2); color: #d29922; }
+  .pulse-pill-2 { background: rgba(240, 136, 62, 0.2); color: #f0883e; }
+  .pulse-pill-3 { background: rgba(248, 81, 73, 0.2); color: #f85149; }
+  .pulse-log { margin-bottom: 24px; }
+  .pulse-entry {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 13px;
+  }
+  .pulse-entry:last-child { border-bottom: none; }
+  .pulse-entry-left { display: flex; align-items: center; gap: 10px; }
+  .pulse-level { font-weight: 600; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+  .pulse-level-1 { background: rgba(210, 153, 34, 0.2); color: #d29922; }
+  .pulse-level-2 { background: rgba(240, 136, 62, 0.2); color: #f0883e; }
+  .pulse-level-3 { background: rgba(248, 81, 73, 0.2); color: #f85149; }
+  .pulse-action { color: #c9d1d9; }
+  .pulse-diagnosis { color: #8b949e; font-size: 12px; }
+  .pulse-time { color: #8b949e; font-size: 12px; white-space: nowrap; }
+  .gantt-pulse-marker {
+    position: absolute; top: -3px; width: 8px; height: 8px;
+    border-radius: 50%; border: 1px solid #0d1117;
+    z-index: 2; cursor: default; transform: translateX(-4px);
+  }
   .history { margin-bottom: 24px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   thead tr { border-bottom: 1px solid #30363d; color: #8b949e; text-align: left; }
@@ -404,6 +430,7 @@ export function generateStaticHTML(data) {
     <div class="section-label">Workflow Timeline</div>
     <div id="gantt-chart"></div>
   </div>
+  <div class="pulse-log" id="pulse-log-panel"></div>
   <div class="footer" id="footer"></div>
 </div>
 <script>
@@ -418,6 +445,14 @@ function escapeHtml(str) {
 function renderLinearPill(status) {
   if (!status) return '';
   return ' <span class="pill pill-linear">' + escapeHtml(status) + '</span>';
+}
+
+var _pulseStatusMap = DASHBOARD_DATA.pulseStatusMap || {};
+
+function renderPulsePill(issueId) {
+  var ps = _pulseStatusMap[issueId];
+  if (!ps) return '';
+  return '<span class="pulse-pill pulse-pill-' + ps.level + '" title="' + escapeHtml(ps.diagnosis) + '">L' + ps.level + '</span>';
 }
 
 function renderGauges(g) {
@@ -436,6 +471,7 @@ function renderAgents(agents) {
       + '<div class="agent-top"><div>'
       + '<span class="agent-issue">' + escapeHtml(a.issueId) + '</span>'
       + '<span class="agent-title">' + escapeHtml(a.issueTitle) + '</span>'
+      + renderPulsePill(a.issueId)
       + '</div><div class="agent-right">'
       + '<span class="pill ' + pillCls + '">' + escapeHtml(a.status) + '</span>'
       + renderLinearPill(a.linearStatus)
@@ -552,6 +588,16 @@ function renderGanttChart(gantt) {
     return '<span>' + escapeHtml(l) + '</span>';
   }).join('') + '</div>';
 
+  var pulseMarkers = {};
+  var pulseLog = DASHBOARD_DATA.pulseActivityLog || [];
+  for (var pi = 0; pi < pulseLog.length; pi++) {
+    var pe = pulseLog[pi];
+    if (!pe.timestamp || !pe.issueId) continue;
+    if (!pulseMarkers[pe.issueId]) pulseMarkers[pe.issueId] = [];
+    pulseMarkers[pe.issueId].push(pe);
+  }
+  var MARKER_COLORS = { 1: '#d29922', 2: '#f0883e', 3: '#f85149' };
+
   var rowsHtml = bars.map(function(bar) {
     var leftPct = Math.max(0, ((bar.startMs - minTime) / range) * 100);
     var widthPct = Math.max(0.5, ((bar.endMs - bar.startMs) / range) * 100);
@@ -559,12 +605,26 @@ function renderGanttChart(gantt) {
     var textHtml = widthPct > 8
       ? '<span class="gantt-bar-text">' + escapeHtml(bar.duration) + '</span>'
       : '';
+    var markersHtml = '';
+    var issueEvents = pulseMarkers[bar.issueId] || [];
+    for (var mi = 0; mi < issueEvents.length; mi++) {
+      var evt = issueEvents[mi];
+      var evtMs = new Date(evt.timestamp).getTime();
+      if (evtMs >= minTime && evtMs <= maxTime) {
+        var markerPct = ((evtMs - minTime) / range) * 100;
+        var mColor = MARKER_COLORS[evt.level] || '#8b949e';
+        var mTitle = 'L' + evt.level + ': ' + escapeHtml(evt.action || '') + ' (' + escapeHtml(evt.diagnosis || '') + ')';
+        markersHtml += '<div class="gantt-pulse-marker" style="left:' + markerPct.toFixed(2) + '%;background:' + mColor + '" title="' + mTitle + '"></div>';
+      }
+    }
     return '<div class="gantt-row">'
       + '<div class="gantt-label" title="' + escapeHtml(bar.issueTitle) + '">' + escapeHtml(bar.issueId) + '</div>'
       + '<div class="gantt-track">'
       + '<div class="gantt-bar" style="left:' + leftPct.toFixed(2) + '%;width:' + widthPct.toFixed(2) + '%;background:' + bar.color + '" title="' + barTitle + '">'
       + textHtml
-      + '</div></div></div>';
+      + '</div>'
+      + markersHtml
+      + '</div></div>';
   }).join('');
 
   var legendItems = [
@@ -580,12 +640,40 @@ function renderGanttChart(gantt) {
   return '<div class="gantt-chart">' + axisHtml + '<div class="gantt-rows">' + rowsHtml + '</div>' + legendHtml + '</div>';
 }
 
+var PULSE_LEVEL_META = {
+  1: { label: 'Level 1', desc: 'Auto-fix', color: '#d29922' },
+  2: { label: 'Level 2', desc: 'Kill + Retry', color: '#f0883e' },
+  3: { label: 'Level 3', desc: 'Halt + Incident', color: '#f85149' },
+};
+
+function renderPulseActivityLog(log) {
+  if (!log || log.length === 0) return '';
+  var entries = log.slice(0, 20).map(function(e) {
+    var meta = PULSE_LEVEL_META[e.level] || { label: 'L' + e.level, color: '#8b949e' };
+    var actionLabel = e.action === 'cancel-requeue' ? 'Requeued'
+      : e.action === 'halt-incident' ? 'Halted' : escapeHtml(e.action);
+    return '<div class="pulse-entry">'
+      + '<div class="pulse-entry-left">'
+      + '<span class="pulse-level pulse-level-' + e.level + '">' + escapeHtml(meta.label) + '</span>'
+      + '<span class="recovery-event-issue">' + escapeHtml(e.issueId) + '</span>'
+      + '<span class="pulse-action">' + actionLabel + '</span>'
+      + '<span class="pulse-diagnosis">' + escapeHtml(e.diagnosis) + '</span>'
+      + '</div>'
+      + '<div class="pulse-time">' + (e.timestamp ? new Date(e.timestamp).toLocaleString() : '') + '</div>'
+      + '</div>';
+  }).join('');
+  return '<div class="section-label">Pulse Check Activity</div>'
+    + '<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px">'
+    + entries + '</div>';
+}
+
 document.getElementById('gauges').innerHTML = renderGauges(DASHBOARD_DATA.gauges);
 document.getElementById('runner-health').innerHTML = renderRunnerHealth(DASHBOARD_DATA.runnerHealth);
 document.getElementById('recovery-panel').innerHTML = renderRecoveryPanel(DASHBOARD_DATA.recoveryLevels);
 document.getElementById('agents-list').innerHTML = renderAgents(DASHBOARD_DATA.activeAgents);
 document.getElementById('history-table').innerHTML = renderHistory(DASHBOARD_DATA.history);
 document.getElementById('gantt-chart').innerHTML = renderGanttChart(DASHBOARD_DATA.gantt);
+document.getElementById('pulse-log-panel').innerHTML = renderPulseActivityLog(DASHBOARD_DATA.pulseActivityLog);
 document.getElementById('build-time').textContent = 'Built: ' + new Date(DASHBOARD_DATA.buildTime).toLocaleString();
 </script>
 </body>

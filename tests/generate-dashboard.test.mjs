@@ -399,3 +399,93 @@ describe("buildStaticData runnerHealth", () => {
     assert.equal(data.runnerHealth.runner.status, "unknown");
   });
 });
+
+// ---------------------------------------------------------------------------
+// buildStaticData — pulse check integration
+// ---------------------------------------------------------------------------
+
+describe("buildStaticData pulseCheck", () => {
+  it("includes pulse data from recovery events", async () => {
+    const recoveryEvents = [
+      { timestamp: "2026-03-15T10:00:00Z", level: 1, action: "cancel-requeue", issueId: "DVA-10", diagnosis: "runner-offline" },
+    ];
+    const data = await buildStaticData([], [], {
+      repoUrl: "https://github.com/test/repo",
+      fetchStatusFn: async () => null,
+      recoveryEvents,
+    });
+    assert.ok(Array.isArray(data.pulseActivityLog), "should include pulseActivityLog");
+    assert.equal(data.pulseActivityLog.length, 1);
+    assert.ok(data.pulseStatusMap, "should include pulseStatusMap");
+    assert.equal(data.pulseStatusMap["DVA-10"].level, 1);
+  });
+
+  it("returns empty pulse data when no recovery events", async () => {
+    const data = await buildStaticData([], [], {
+      repoUrl: "https://github.com/test/repo",
+      fetchStatusFn: async () => null,
+    });
+    assert.deepEqual(data.pulseActivityLog, []);
+    assert.deepEqual(data.pulseStatusMap, {});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateStaticHTML — pulse check elements
+// ---------------------------------------------------------------------------
+
+describe("generateStaticHTML pulseCheck", () => {
+  const sampleDataWithPulse = {
+    gauges: {
+      running: 1, succeeded: 2, failed: 0,
+      totalSucceeded: 5, totalFailed: 1,
+      dailyUsed: 3, dailyLimit: 4,
+    },
+    activeAgents: [{
+      issueId: "DVA-40", issueTitle: "Filter",
+      status: "In Progress", duration: "5m 23s",
+      runner: "self-hosted", branch: "feature/DVA-40",
+      linearStatus: "In Progress",
+    }],
+    history: [],
+    buildTime: "2026-03-15T12:00:00Z",
+    pulseActivityLog: [{
+      timestamp: "2026-03-15T11:00:00Z", level: 2,
+      action: "cancel-requeue", issueId: "DVA-40",
+      issueTitle: "Filter", diagnosis: "log-errors",
+      when: "1h ago",
+    }],
+    pulseStatusMap: {
+      "DVA-40": { lastChecked: "2026-03-15T11:00:00Z", level: 2, action: "cancel-requeue", diagnosis: "log-errors" },
+    },
+  };
+
+  it("includes pulse pill CSS", () => {
+    const html = generateStaticHTML(sampleDataWithPulse);
+    assert.ok(html.includes("pulse-pill"), "should have pulse pill CSS");
+    assert.ok(html.includes("pulse-pill-1"), "should have level 1 pulse pill CSS");
+  });
+
+  it("includes pulse activity log rendering", () => {
+    const html = generateStaticHTML(sampleDataWithPulse);
+    assert.ok(html.includes("pulse-log-panel"), "should have pulse log container");
+    assert.ok(html.includes("renderPulseActivityLog"), "should have render function");
+  });
+
+  it("includes pulse status map for agent pills", () => {
+    const html = generateStaticHTML(sampleDataWithPulse);
+    assert.ok(html.includes("renderPulsePill"), "should have renderPulsePill function");
+    assert.ok(html.includes("_pulseStatusMap"), "should reference pulse status map");
+  });
+
+  it("includes Gantt pulse marker CSS", () => {
+    const html = generateStaticHTML(sampleDataWithPulse);
+    assert.ok(html.includes("gantt-pulse-marker"), "should have Gantt pulse marker CSS");
+  });
+
+  it("embeds pulse data in dashboard JSON", () => {
+    const html = generateStaticHTML(sampleDataWithPulse);
+    assert.ok(html.includes("pulseActivityLog"), "should embed pulse log data");
+    assert.ok(html.includes("pulseStatusMap"), "should embed pulse status map");
+  });
+});

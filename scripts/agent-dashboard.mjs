@@ -454,6 +454,67 @@ export function buildRunnerHealth({ runs, completedRuns, recoveryEvents, runnerD
 }
 
 // ---------------------------------------------------------------------------
+// Pulse check activity log & status map
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a chronological activity log from recovery events.
+ * Each entry includes the original event fields plus a relative time string.
+ *
+ * @param {object[]} events - Recovery event objects from recovery-events.jsonl
+ * @param {number} [limit=50] - Max entries to return
+ * @returns {object[]} Newest-first activity log entries
+ */
+export function buildPulseActivityLog(events, limit = 50) {
+  if (!events || events.length === 0) return [];
+
+  const sorted = [...events]
+    .filter((e) => e.timestamp)
+    .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+
+  return sorted.slice(0, limit).map((e) => ({
+    timestamp: e.timestamp,
+    level: e.level,
+    action: e.action || "unknown",
+    issueId: e.issueId || "unknown",
+    issueTitle: e.issueTitle || "",
+    diagnosis: e.diagnosis || "",
+    runId: e.runId || "",
+    when: formatRelativeTime(e.timestamp),
+  }));
+}
+
+/**
+ * Build a map of issueId → latest pulse check status.
+ * Used to show pulse check indicators on active agent cards.
+ *
+ * @param {object[]} events - Recovery event objects
+ * @returns {Record<string, { lastChecked: string, level: number, action: string, diagnosis: string }>}
+ */
+export function buildPulseStatusMap(events) {
+  if (!events || events.length === 0) return {};
+
+  const map = {};
+  // Sort newest first so the first occurrence per issue is the latest
+  const sorted = [...events]
+    .filter((e) => e.timestamp && e.issueId)
+    .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+
+  for (const e of sorted) {
+    if (!map[e.issueId]) {
+      map[e.issueId] = {
+        lastChecked: e.timestamp,
+        level: e.level,
+        action: e.action || "unknown",
+        diagnosis: e.diagnosis || "",
+      };
+    }
+  }
+
+  return map;
+}
+
+// ---------------------------------------------------------------------------
 // Gantt chart data builder
 // ---------------------------------------------------------------------------
 
@@ -621,6 +682,9 @@ export function buildDashboardData(raw) {
 
   const gantt = buildGanttData(runs);
 
+  const pulseActivityLog = buildPulseActivityLog(recoveryEvents || []);
+  const pulseStatusMap = buildPulseStatusMap(recoveryEvents || []);
+
   return {
     gauges: {
       running: runningCount,
@@ -636,6 +700,8 @@ export function buildDashboardData(raw) {
     recoveryLevels: recovery,
     runnerHealth,
     gantt,
+    pulseActivityLog,
+    pulseStatusMap,
     // Keep raw references for CLI renderer
     _active: active,
     _completed: completed,
@@ -759,8 +825,9 @@ export function renderDashboard(data, opts = {}) {
     }
   }
 
-  // Active agents
+  // Active agents (with pulse check status)
   const activeRuns = data._active || data.active || [];
+  const pulseMap = data.pulseStatusMap || {};
   if (activeRuns.length === 0) {
     lines.push(`${C.dim}  No agents currently running${C.reset}`);
   } else {
@@ -776,8 +843,13 @@ export function renderDashboard(data, opts = {}) {
         issueTitle.length > 40
           ? issueTitle.slice(0, 37) + "..."
           : issueTitle;
+      // Pulse check status indicator
+      const pulse = pulseMap[issueId];
+      const pulseTag = pulse
+        ? ` ${pulse.level === 3 ? C.red : pulse.level === 2 ? C.orange : C.yellow}[L${pulse.level}]${C.reset}`
+        : "";
       lines.push(
-        `${dot} ${C.cyan}${issueId}${C.reset} ${titleStr}${" ".repeat(Math.max(1, 42 - issueId.length - titleStr.length))}${C.yellow}${duration}${C.reset}${statusTag}`
+        `${dot} ${C.cyan}${issueId}${C.reset} ${titleStr}${" ".repeat(Math.max(1, 42 - issueId.length - titleStr.length))}${C.yellow}${duration}${C.reset}${statusTag}${pulseTag}`
       );
     }
   }
@@ -852,6 +924,29 @@ export function renderDashboard(data, opts = {}) {
     lines.push(
       `  ${C.green}█${C.reset} Success  ${C.red}█${C.reset} Failed  ${C.cyan}█${C.reset} Running  ${C.yellow}█${C.reset} Queued`
     );
+  }
+
+  // Pulse check activity log
+  const pulseLog = data.pulseActivityLog || [];
+  if (pulseLog.length > 0) {
+    lines.push("");
+    lines.push(`${C.dim}${"─".repeat(62)}${C.reset}`);
+    lines.push(`${C.yellow}PULSE CHECK ACTIVITY${C.reset}`);
+    lines.push("");
+    const maxPulseEntries = 5;
+    for (const entry of pulseLog.slice(0, maxPulseEntries)) {
+      const levelColor = entry.level === 3 ? C.red : entry.level === 2 ? C.orange : C.yellow;
+      const levelTag = `${levelColor}L${entry.level}${C.reset}`;
+      const actionStr = entry.action === "cancel-requeue" ? "requeued"
+        : entry.action === "halt-incident" ? "halted"
+        : entry.action;
+      lines.push(
+        `  ${levelTag} ${C.cyan}${entry.issueId}${C.reset} ${actionStr} ${C.dim}(${entry.diagnosis})${C.reset}  ${C.dim}${entry.when}${C.reset}`
+      );
+    }
+    if (pulseLog.length > maxPulseEntries) {
+      lines.push(`  ${C.dim}... and ${pulseLog.length - maxPulseEntries} more${C.reset}`);
+    }
   }
 
   // Footer
@@ -1003,6 +1098,36 @@ export function generateDashboardHTML() {
   .agent-meta { color: #8b949e; font-size: 12px; margin-top: 6px; }
   .agent-meta span { color: #c9d1d9; }
   .empty-state { color: #8b949e; font-style: italic; padding: 16px 0; }
+  .pulse-pill {
+    padding: 2px 6px; border-radius: 4px; font-size: 10px;
+    font-weight: 600; margin-left: 8px; display: inline-block;
+  }
+  .pulse-pill-1 { background: rgba(210, 153, 34, 0.2); color: #d29922; }
+  .pulse-pill-2 { background: rgba(240, 136, 62, 0.2); color: #f0883e; }
+  .pulse-pill-3 { background: rgba(248, 81, 73, 0.2); color: #f85149; }
+
+  /* Pulse activity log */
+  .pulse-log { margin-bottom: 24px; }
+  .pulse-entry {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; border-bottom: 1px solid #21262d; font-size: 13px;
+  }
+  .pulse-entry:last-child { border-bottom: none; }
+  .pulse-entry-left { display: flex; align-items: center; gap: 10px; }
+  .pulse-level { font-weight: 600; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+  .pulse-level-1 { background: rgba(210, 153, 34, 0.2); color: #d29922; }
+  .pulse-level-2 { background: rgba(240, 136, 62, 0.2); color: #f0883e; }
+  .pulse-level-3 { background: rgba(248, 81, 73, 0.2); color: #f85149; }
+  .pulse-action { color: #c9d1d9; }
+  .pulse-diagnosis { color: #8b949e; font-size: 12px; }
+  .pulse-time { color: #8b949e; font-size: 12px; white-space: nowrap; }
+
+  /* Gantt pulse markers */
+  .gantt-pulse-marker {
+    position: absolute; top: -3px; width: 8px; height: 8px;
+    border-radius: 50%; border: 1px solid #0d1117;
+    z-index: 2; cursor: default; transform: translateX(-4px);
+  }
 
   /* History table */
   .history { margin-bottom: 24px; }
@@ -1102,6 +1227,7 @@ export function generateDashboardHTML() {
     <div class="section-label">Workflow Timeline</div>
     <div id="gantt-chart"></div>
   </div>
+  <div class="pulse-log" id="pulse-log-panel"></div>
 </div>
 <script>
 const REPO_URL = ${JSON.stringify(REPO_URL)};
@@ -1135,6 +1261,14 @@ function renderGauges(g) {
   \`;
 }
 
+var _pulseStatusMap = {};
+
+function renderPulsePill(issueId) {
+  var ps = _pulseStatusMap[issueId];
+  if (!ps) return '';
+  return '<span class="pulse-pill pulse-pill-' + ps.level + '" title="' + escapeHtml(ps.diagnosis) + '">L' + ps.level + '</span>';
+}
+
 function renderAgents(agents) {
   if (!agents.length) return '<div class="empty-state">No agents currently running</div>';
   return agents.map(a => {
@@ -1146,6 +1280,7 @@ function renderAgents(agents) {
           <div>
             <span class="agent-issue">\${escapeHtml(a.issueId)}</span>
             <span class="agent-title">\${escapeHtml(a.issueTitle)}</span>
+            \${renderPulsePill(a.issueId)}
           </div>
           <div class="agent-right">
             <span class="pill \${pillCls}">\${escapeHtml(a.status)}</span>
@@ -1337,6 +1472,18 @@ function renderGanttChart(gantt) {
     return '<span>' + escapeHtml(l) + '</span>';
   }).join('') + '</div>';
 
+  // Build pulse markers index by issueId
+  var pulseMarkers = {};
+  var pulseLog = _pulseActivityLog || [];
+  for (var pi = 0; pi < pulseLog.length; pi++) {
+    var pe = pulseLog[pi];
+    if (!pe.timestamp || !pe.issueId) continue;
+    if (!pulseMarkers[pe.issueId]) pulseMarkers[pe.issueId] = [];
+    pulseMarkers[pe.issueId].push(pe);
+  }
+
+  var MARKER_COLORS = { 1: '#d29922', 2: '#f0883e', 3: '#f85149' };
+
   // Build rows
   const rowsHtml = bars.map(function(bar) {
     const leftPct = Math.max(0, ((bar.startMs - minTime) / range) * 100);
@@ -1346,12 +1493,29 @@ function renderGanttChart(gantt) {
     const textHtml = widthPct > 8
       ? '<span class="gantt-bar-text">' + escapeHtml(bar.duration) + '</span>'
       : '';
+
+    // Pulse check markers overlaid on the track
+    var markersHtml = '';
+    var issueEvents = pulseMarkers[bar.issueId] || [];
+    for (var mi = 0; mi < issueEvents.length; mi++) {
+      var evt = issueEvents[mi];
+      var evtMs = new Date(evt.timestamp).getTime();
+      if (evtMs >= minTime && evtMs <= maxTime) {
+        var markerPct = ((evtMs - minTime) / range) * 100;
+        var mColor = MARKER_COLORS[evt.level] || '#8b949e';
+        var mTitle = 'L' + evt.level + ': ' + escapeHtml(evt.action || '') + ' (' + escapeHtml(evt.diagnosis || '') + ')';
+        markersHtml += '<div class="gantt-pulse-marker" style="left:' + markerPct.toFixed(2) + '%;background:' + mColor + '" title="' + mTitle + '"></div>';
+      }
+    }
+
     return '<div class="gantt-row">'
       + '<div class="gantt-label" title="' + escapeHtml(bar.issueTitle) + '">' + escapeHtml(bar.issueId) + '</div>'
       + '<div class="gantt-track">'
       + '<div class="gantt-bar" style="left:' + leftPct.toFixed(2) + '%;width:' + widthPct.toFixed(2) + '%;background:' + bar.color + '" title="' + barTitle + '">'
       + textHtml
-      + '</div></div></div>';
+      + '</div>'
+      + markersHtml
+      + '</div></div>';
   }).join('');
 
   // Legend
@@ -1368,17 +1532,49 @@ function renderGanttChart(gantt) {
   return '<div class="gantt-chart">' + axisHtml + '<div class="gantt-rows">' + rowsHtml + '</div>' + legendHtml + '</div>';
 }
 
+var PULSE_LEVEL_META = {
+  1: { label: 'Level 1', desc: 'Auto-fix', color: '#d29922' },
+  2: { label: 'Level 2', desc: 'Kill + Retry', color: '#f0883e' },
+  3: { label: 'Level 3', desc: 'Halt + Incident', color: '#f85149' },
+};
+
+function renderPulseActivityLog(log) {
+  if (!log || log.length === 0) return '';
+  var entries = log.slice(0, 20).map(function(e) {
+    var meta = PULSE_LEVEL_META[e.level] || { label: 'L' + e.level, color: '#8b949e' };
+    var actionLabel = e.action === 'cancel-requeue' ? 'Requeued'
+      : e.action === 'halt-incident' ? 'Halted' : escapeHtml(e.action);
+    return '<div class="pulse-entry">'
+      + '<div class="pulse-entry-left">'
+      + '<span class="pulse-level pulse-level-' + e.level + '">' + escapeHtml(meta.label) + '</span>'
+      + '<span class="recovery-event-issue">' + escapeHtml(e.issueId) + '</span>'
+      + '<span class="pulse-action">' + actionLabel + '</span>'
+      + '<span class="pulse-diagnosis">' + escapeHtml(e.diagnosis) + '</span>'
+      + '</div>'
+      + '<div class="pulse-time">' + escapeHtml(e.when || '') + '</div>'
+      + '</div>';
+  }).join('');
+  return '<div class="section-label">Pulse Check Activity</div>'
+    + '<div style="background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px">'
+    + entries + '</div>';
+}
+
+var _pulseActivityLog = [];
+
 async function refresh() {
   try {
     const res = await fetch('/api/status');
     if (!res.ok) throw new Error('API error');
     const data = await res.json();
+    _pulseStatusMap = data.pulseStatusMap || {};
+    _pulseActivityLog = data.pulseActivityLog || [];
     document.getElementById('gauges').innerHTML = renderGauges(data.gauges);
     document.getElementById('runner-health').innerHTML = renderRunnerHealth(data.runnerHealth);
     document.getElementById('recovery-panel').innerHTML = renderRecoveryPanel(data.recoveryLevels);
     document.getElementById('agents-list').innerHTML = renderAgents(data.activeAgents);
     document.getElementById('history-table').innerHTML = renderHistory(data.history);
     document.getElementById('gantt-chart').innerHTML = renderGanttChart(data.gantt);
+    document.getElementById('pulse-log-panel').innerHTML = renderPulseActivityLog(data.pulseActivityLog);
     document.getElementById('last-update').textContent =
       'Updated: ' + new Date().toLocaleTimeString();
   } catch (err) {
