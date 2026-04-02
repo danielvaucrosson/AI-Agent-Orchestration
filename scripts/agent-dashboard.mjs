@@ -1071,6 +1071,29 @@ export function generateDashboardHTML() {
   .gantt-legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #8b949e; }
   .gantt-legend-dot { width: 10px; height: 10px; border-radius: 2px; }
   .gantt-empty { color: #8b949e; font-style: italic; padding: 16px; text-align: center; }
+
+  /* Status filter bar */
+  .filter-bar {
+    display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap;
+    align-items: center;
+  }
+  .filter-bar-label {
+    color: #8b949e; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 1px; margin-right: 4px;
+  }
+  .filter-btn {
+    padding: 4px 14px; border-radius: 16px; border: 1px solid #30363d;
+    background: #161b22; color: #8b949e; font-size: 12px; cursor: pointer;
+    transition: all 0.2s; font-family: inherit;
+  }
+  .filter-btn:hover { border-color: #58a6ff; color: #c9d1d9; }
+  .filter-btn.active { border-color: #58a6ff; color: #fff; background: #1f6feb; }
+  .filter-btn.active[data-filter="success"] { background: #238636; border-color: #3fb950; }
+  .filter-btn.active[data-filter="failure"] { background: #da3633; border-color: #f85149; }
+  .filter-btn.active[data-filter="in_progress"] { background: #1f6feb; border-color: #58a6ff; }
+  .filter-btn.active[data-filter="queued"] { background: #9e6a03; border-color: #d29922; }
+  .filtered-out { display: none; }
+
   @media (max-width: 768px) {
     .gantt-label { width: 80px; min-width: 80px; font-size: 11px; }
     .gantt-axis { padding-left: 80px; }
@@ -1093,6 +1116,14 @@ export function generateDashboardHTML() {
   <div class="agents">
     <div class="section-label">Active Agents</div>
     <div id="agents-list"></div>
+  </div>
+  <div class="filter-bar" id="filter-bar">
+    <span class="filter-bar-label">Filter:</span>
+    <button class="filter-btn active" data-filter="all">All</button>
+    <button class="filter-btn" data-filter="success">Success</button>
+    <button class="filter-btn" data-filter="failure">Failed</button>
+    <button class="filter-btn" data-filter="in_progress">In Progress</button>
+    <button class="filter-btn" data-filter="queued">Queued</button>
   </div>
   <div class="history">
     <div class="section-label">Recent Runs</div>
@@ -1141,7 +1172,7 @@ function renderAgents(agents) {
     const cls = a.status === 'In Progress' ? 'in-progress' : 'queued';
     const pillCls = a.status === 'In Progress' ? 'pill-progress' : 'pill-queued';
     return \`
-      <div class="agent-card \${cls}">
+      <div class="agent-card \${cls}" data-status="\${a.status === 'In Progress' ? 'in_progress' : 'queued'}">
         <div class="agent-top">
           <div>
             <span class="agent-issue">\${escapeHtml(a.issueId)}</span>
@@ -1173,7 +1204,7 @@ function renderHistory(history) {
       : '<span class="pr-none">&mdash;</span>';
     const pct = maxMs > 0 ? Math.round(((h.durationMs || 0) / maxMs) * 100) : 0;
     return \`
-      <tr>
+      <tr data-status="\${h.success ? 'success' : 'failure'}">
         <td>\${statusIcon}</td>
         <td class="issue-link">\${escapeHtml(h.issueId)}</td>
         <td>\${escapeHtml(h.issueTitle)}</td>
@@ -1346,7 +1377,7 @@ function renderGanttChart(gantt) {
     const textHtml = widthPct > 8
       ? '<span class="gantt-bar-text">' + escapeHtml(bar.duration) + '</span>'
       : '';
-    return '<div class="gantt-row">'
+    return '<div class="gantt-row" data-status="' + bar.status + '">'
       + '<div class="gantt-label" title="' + escapeHtml(bar.issueTitle) + '">' + escapeHtml(bar.issueId) + '</div>'
       + '<div class="gantt-track">'
       + '<div class="gantt-bar" style="left:' + leftPct.toFixed(2) + '%;width:' + widthPct.toFixed(2) + '%;background:' + bar.color + '" title="' + barTitle + '">'
@@ -1368,6 +1399,28 @@ function renderGanttChart(gantt) {
   return '<div class="gantt-chart">' + axisHtml + '<div class="gantt-rows">' + rowsHtml + '</div>' + legendHtml + '</div>';
 }
 
+var currentFilter = 'all';
+
+function setFilter(status) {
+  currentFilter = status;
+  document.querySelectorAll('.filter-btn').forEach(function(btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-filter') === status);
+  });
+  applyFilter();
+}
+
+function applyFilter() {
+  document.querySelectorAll('#agents-list .agent-card').forEach(function(el) {
+    el.classList.toggle('filtered-out', currentFilter !== 'all' && el.getAttribute('data-status') !== currentFilter);
+  });
+  document.querySelectorAll('#history-table tbody tr').forEach(function(el) {
+    el.classList.toggle('filtered-out', currentFilter !== 'all' && el.getAttribute('data-status') !== currentFilter);
+  });
+  document.querySelectorAll('#gantt-chart .gantt-row').forEach(function(el) {
+    el.classList.toggle('filtered-out', currentFilter !== 'all' && el.getAttribute('data-status') !== currentFilter);
+  });
+}
+
 async function refresh() {
   try {
     const res = await fetch('/api/status');
@@ -1381,10 +1434,16 @@ async function refresh() {
     document.getElementById('gantt-chart').innerHTML = renderGanttChart(data.gantt);
     document.getElementById('last-update').textContent =
       'Updated: ' + new Date().toLocaleTimeString();
+    applyFilter();
   } catch (err) {
     console.error('Refresh failed:', err);
   }
 }
+
+document.getElementById('filter-bar').addEventListener('click', function(e) {
+  var btn = e.target.closest('.filter-btn');
+  if (btn) setFilter(btn.getAttribute('data-filter'));
+});
 
 refresh();
 setInterval(refresh, 10000);

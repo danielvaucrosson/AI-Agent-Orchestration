@@ -914,3 +914,171 @@ describe("renderDashboard — includes Gantt chart section", () => {
       "CLI should not show WORKFLOW TIMELINE with empty runs");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Status Filter Tests — generateDashboardHTML (DVA-54)
+// ---------------------------------------------------------------------------
+
+describe("generateDashboardHTML — status filter bar", () => {
+  it("includes filter-bar container div", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes('id="filter-bar"'), "Web HTML should have filter-bar div");
+  });
+
+  it("includes filter buttons for all statuses", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes('data-filter="all"'), "Should have 'All' filter button");
+    assert.ok(html.includes('data-filter="success"'), "Should have 'Success' filter button");
+    assert.ok(html.includes('data-filter="failure"'), "Should have 'Failed' filter button");
+    assert.ok(html.includes('data-filter="in_progress"'), "Should have 'In Progress' filter button");
+    assert.ok(html.includes('data-filter="queued"'), "Should have 'Queued' filter button");
+  });
+
+  it("includes filter CSS classes", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes(".filter-bar"), "Web HTML should have .filter-bar CSS");
+    assert.ok(html.includes(".filter-btn"), "Web HTML should have .filter-btn CSS");
+    assert.ok(html.includes(".filtered-out"), "Web HTML should have .filtered-out CSS");
+  });
+
+  it("includes setFilter and applyFilter functions", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("function setFilter"), "Web HTML should have setFilter function");
+    assert.ok(html.includes("function applyFilter"), "Web HTML should have applyFilter function");
+  });
+
+  it("calls applyFilter after refresh to preserve filter state", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("applyFilter()"), "Web HTML should call applyFilter after refresh");
+  });
+
+  it("adds data-status attribute to history table rows", () => {
+    const html = generateDashboardHTML();
+    assert.ok(
+      html.includes("data-status=\"${h.success ? 'success' : 'failure'}\">") ||
+      html.includes('data-status='),
+      "renderHistory should add data-status attribute to <tr> elements"
+    );
+  });
+
+  it("adds data-status attribute to gantt rows", () => {
+    const html = generateDashboardHTML();
+    assert.ok(
+      html.includes("data-status=\"' + bar.status + '\""),
+      "renderGanttChart should add data-status attribute to gantt rows"
+    );
+  });
+
+  it("adds data-status attribute to agent cards", () => {
+    const html = generateDashboardHTML();
+    assert.ok(
+      html.includes("data-status=\"${a.status"),
+      "renderAgents should add data-status attribute to agent cards"
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Status Filter Tests — generateStaticHTML (DVA-54)
+// ---------------------------------------------------------------------------
+
+describe("generateStaticHTML — status filter bar", () => {
+  it("includes filter-bar container div", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(html.includes('id="filter-bar"'), "Static HTML should have filter-bar div");
+  });
+
+  it("includes filter buttons for all statuses", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(html.includes('data-filter="all"'), "Should have 'All' filter button");
+    assert.ok(html.includes('data-filter="success"'), "Should have 'Success' filter button");
+    assert.ok(html.includes('data-filter="failure"'), "Should have 'Failed' filter button");
+    assert.ok(html.includes('data-filter="in_progress"'), "Should have 'In Progress' filter button");
+    assert.ok(html.includes('data-filter="queued"'), "Should have 'Queued' filter button");
+  });
+
+  it("includes filter CSS classes", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(html.includes(".filter-bar"), "Static HTML should have .filter-bar CSS");
+    assert.ok(html.includes(".filter-btn"), "Static HTML should have .filter-btn CSS");
+    assert.ok(html.includes(".filtered-out"), "Static HTML should have .filtered-out CSS");
+  });
+
+  it("includes setFilter and applyFilter functions", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(html.includes("function setFilter"), "Static HTML should have setFilter function");
+    assert.ok(html.includes("function applyFilter"), "Static HTML should have applyFilter function");
+  });
+
+  it("adds data-status to history rows in rendered output", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(
+      html.includes("data-status=\"' + (h.success"),
+      "Static renderHistory should add data-status attribute"
+    );
+  });
+
+  it("adds data-status to gantt rows in rendered output", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(
+      html.includes("data-status=\"' + bar.status"),
+      "Static renderGanttChart should add data-status attribute"
+    );
+  });
+
+  it("adds data-status to agent cards in rendered output", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(
+      html.includes("data-status=\"' + (a.status"),
+      "Static renderAgents should add data-status attribute"
+    );
+  });
+
+  it("registers click handler on filter-bar", () => {
+    const raw = makeMockRaw();
+    const data = buildDashboardData(raw);
+    const { _active, _completed, _prMap, _dailyCount, ...publicData } = data;
+    publicData.buildTime = new Date().toISOString();
+
+    const html = generateStaticHTML(publicData);
+    assert.ok(
+      html.includes("filter-bar").valueOf() && html.includes("addEventListener"),
+      "Static HTML should register click handler on filter-bar"
+    );
+  });
+});
