@@ -15,6 +15,8 @@ import {
   computeSuccessRate,
   computeDaysSinceIncident,
   buildRunnerHealth,
+  buildPulseActivityLog,
+  buildPulseStatusMap,
   buildDashboardData,
   renderDashboard,
   generateDashboardHTML,
@@ -866,5 +868,193 @@ describe("renderDashboard runner health", () => {
     assert.ok(!html.includes(">UNKNOWN<"), "should not show UNKNOWN in HTML");
     assert.ok(html.includes(">N/A<"), "should show N/A for runner card");
     assert.ok(html.includes("needs admin token"), "should mention admin token");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildPulseActivityLog
+// ---------------------------------------------------------------------------
+
+describe("buildPulseActivityLog", () => {
+  it("returns empty array for no events", () => {
+    assert.deepEqual(buildPulseActivityLog([]), []);
+    assert.deepEqual(buildPulseActivityLog(null), []);
+  });
+
+  it("returns events sorted newest first with when field", () => {
+    const events = [
+      { timestamp: "2026-03-15T10:00:00Z", level: 1, action: "cancel-requeue", issueId: "DVA-10", diagnosis: "runner-offline" },
+      { timestamp: "2026-03-15T12:00:00Z", level: 2, action: "cancel-requeue", issueId: "DVA-11", diagnosis: "log-errors" },
+    ];
+    const log = buildPulseActivityLog(events);
+    assert.equal(log.length, 2);
+    assert.equal(log[0].issueId, "DVA-11", "newest first");
+    assert.equal(log[1].issueId, "DVA-10");
+    assert.ok(log[0].when, "should have when field");
+  });
+
+  it("respects limit parameter", () => {
+    const events = Array.from({ length: 10 }, (_, i) => ({
+      timestamp: `2026-03-15T${String(i).padStart(2, "0")}:00:00Z`,
+      level: 1, action: "cancel-requeue", issueId: `DVA-${i}`,
+    }));
+    const log = buildPulseActivityLog(events, 3);
+    assert.equal(log.length, 3);
+  });
+
+  it("skips events without timestamps", () => {
+    const events = [
+      { level: 1, action: "cancel-requeue", issueId: "DVA-10" },
+      { timestamp: "2026-03-15T10:00:00Z", level: 2, action: "cancel-requeue", issueId: "DVA-11" },
+    ];
+    const log = buildPulseActivityLog(events);
+    assert.equal(log.length, 1);
+    assert.equal(log[0].issueId, "DVA-11");
+  });
+
+  it("includes all expected fields", () => {
+    const events = [
+      { timestamp: "2026-03-15T10:00:00Z", level: 1, action: "cancel-requeue", issueId: "DVA-10", issueTitle: "Test", diagnosis: "runner-offline", runId: "123" },
+    ];
+    const log = buildPulseActivityLog(events);
+    assert.equal(log[0].level, 1);
+    assert.equal(log[0].action, "cancel-requeue");
+    assert.equal(log[0].issueTitle, "Test");
+    assert.equal(log[0].diagnosis, "runner-offline");
+    assert.equal(log[0].runId, "123");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildPulseStatusMap
+// ---------------------------------------------------------------------------
+
+describe("buildPulseStatusMap", () => {
+  it("returns empty object for no events", () => {
+    assert.deepEqual(buildPulseStatusMap([]), {});
+    assert.deepEqual(buildPulseStatusMap(null), {});
+  });
+
+  it("returns latest event per issue", () => {
+    const events = [
+      { timestamp: "2026-03-15T10:00:00Z", level: 1, action: "cancel-requeue", issueId: "DVA-10", diagnosis: "runner-offline" },
+      { timestamp: "2026-03-15T12:00:00Z", level: 2, action: "cancel-requeue", issueId: "DVA-10", diagnosis: "log-errors" },
+    ];
+    const map = buildPulseStatusMap(events);
+    assert.equal(Object.keys(map).length, 1);
+    assert.equal(map["DVA-10"].level, 2, "should keep the latest event");
+    assert.equal(map["DVA-10"].diagnosis, "log-errors");
+    assert.equal(map["DVA-10"].lastChecked, "2026-03-15T12:00:00Z");
+  });
+
+  it("tracks multiple issues separately", () => {
+    const events = [
+      { timestamp: "2026-03-15T10:00:00Z", level: 1, action: "cancel-requeue", issueId: "DVA-10", diagnosis: "runner-offline" },
+      { timestamp: "2026-03-15T11:00:00Z", level: 3, action: "halt-incident", issueId: "DVA-11", diagnosis: "no-errors" },
+    ];
+    const map = buildPulseStatusMap(events);
+    assert.equal(Object.keys(map).length, 2);
+    assert.equal(map["DVA-10"].level, 1);
+    assert.equal(map["DVA-11"].level, 3);
+  });
+
+  it("skips events without issueId or timestamp", () => {
+    const events = [
+      { timestamp: "2026-03-15T10:00:00Z", level: 1, action: "cancel-requeue" },
+      { level: 1, action: "cancel-requeue", issueId: "DVA-10" },
+    ];
+    const map = buildPulseStatusMap(events);
+    assert.deepEqual(map, {});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildDashboardData — pulse check integration
+// ---------------------------------------------------------------------------
+
+describe("buildDashboardData pulseCheck", () => {
+  it("includes pulseActivityLog and pulseStatusMap in output", () => {
+    const recoveryEvents = [
+      { timestamp: "2026-03-15T10:00:00Z", level: 1, action: "cancel-requeue", issueId: "DVA-10", diagnosis: "runner-offline" },
+    ];
+    const data = buildDashboardData({ runs: [], prs: [], recoveryEvents });
+    assert.ok(Array.isArray(data.pulseActivityLog));
+    assert.equal(data.pulseActivityLog.length, 1);
+    assert.ok(data.pulseStatusMap);
+    assert.equal(data.pulseStatusMap["DVA-10"].level, 1);
+  });
+
+  it("returns empty pulse data when no recovery events", () => {
+    const data = buildDashboardData({ runs: [], prs: [] });
+    assert.deepEqual(data.pulseActivityLog, []);
+    assert.deepEqual(data.pulseStatusMap, {});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderDashboard — pulse check display
+// ---------------------------------------------------------------------------
+
+describe("renderDashboard pulseCheck", () => {
+  it("shows pulse level tag on active agents with recovery events", () => {
+    const now = new Date().toISOString();
+    const recoveryEvents = [
+      { timestamp: now, level: 2, action: "cancel-requeue", issueId: "DVA-40", diagnosis: "log-errors" },
+    ];
+    const data = buildDashboardData({
+      runs: [
+        {
+          id: 1, status: "in_progress", created_at: now,
+          run_started_at: now,
+          inputs: { issue_id: "DVA-40", issue_title: "Filter" },
+        },
+      ],
+      prs: [],
+      recoveryEvents,
+    });
+    const output = renderDashboard(data);
+    assert.ok(output.includes("[L2]"), "should show level tag for DVA-40");
+  });
+
+  it("shows pulse activity log section", () => {
+    const recoveryEvents = [
+      { timestamp: "2026-03-15T10:00:00Z", level: 1, action: "cancel-requeue", issueId: "DVA-10", diagnosis: "runner-offline" },
+    ];
+    const data = buildDashboardData({ runs: [], prs: [], recoveryEvents });
+    const output = renderDashboard(data);
+    assert.ok(output.includes("PULSE CHECK ACTIVITY"), "should show activity section");
+    assert.ok(output.includes("DVA-10"), "should show issue ID");
+    assert.ok(output.includes("requeued"), "should show action");
+  });
+
+  it("omits pulse activity section when no events", () => {
+    const data = buildDashboardData({ runs: [], prs: [] });
+    const output = renderDashboard(data);
+    assert.ok(!output.includes("PULSE CHECK ACTIVITY"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateDashboardHTML — pulse check elements
+// ---------------------------------------------------------------------------
+
+describe("generateDashboardHTML pulseCheck", () => {
+  it("includes pulse pill CSS and rendering", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("pulse-pill"), "should include pulse pill CSS");
+    assert.ok(html.includes("renderPulsePill"), "should include renderPulsePill function");
+    assert.ok(html.includes("_pulseStatusMap"), "should include pulse status map variable");
+  });
+
+  it("includes pulse activity log rendering", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("pulse-log-panel"), "should include pulse log panel container");
+    assert.ok(html.includes("renderPulseActivityLog"), "should include pulse log render function");
+    assert.ok(html.includes("PULSE_LEVEL_META"), "should include level metadata");
+  });
+
+  it("includes Gantt pulse marker CSS", () => {
+    const html = generateDashboardHTML();
+    assert.ok(html.includes("gantt-pulse-marker"), "should include Gantt pulse marker CSS");
   });
 });
